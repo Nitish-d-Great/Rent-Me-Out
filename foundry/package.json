@@ -1,0 +1,23 @@
+{
+  "name": "semaphore-hedera-foundry",
+  "version": "1.0.0",
+  "description": "**Foundry is a blazing fast, portable and modular toolkit for Ethereum application development written in Rust.**",
+  "directories": {
+    "lib": "lib",
+    "test": "test"
+  },
+  "scripts": {
+    "postinstall": "node js/link-deps.js",
+    "fixture": "node js/make-fixture.js"
+  },
+  "license": "ISC",
+  "dependencies": {
+    "@semaphore-protocol/contracts": "^4.14.5",
+    "@semaphore-protocol/core": "^4.14.5",
+    "poseidon-solidity": "^0.0.5"
+  },
+  "devDependencies": {
+    "ethers": "^6.17.0"
+  },
+  "private": true
+}
