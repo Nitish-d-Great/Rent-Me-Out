@@ -107,7 +107,7 @@ sequenceDiagram
     Tenant->>ARK: verify(propertyId)
     Tenant->>HED: holderOf(propertyId, roomIndex)
     Tenant->>Broker: request presence check
-    Broker->>BE: World ID proof (broker-presence)
+    Broker->>BE: session proof (proveSession on saved session)
     BE-->>Tenant: green / red
 
     Registrar->>HED: freezeRoom() on dispute
@@ -156,12 +156,12 @@ The registrar never appears in the payment path — USDC moves broker → owner 
               |  Testnet       |       |  (IDKit +       |      |  Testnet        |
               |                |       |   Selfie Check) |      |                 |
               |  - RentalReg.  |       |                 |      |  - Listings     |
-              |  - ATS Tokens  |       |  3 actions:     |      |  - Verify Index |
+              |  - ATS Tokens  |       |  2 actions:     |      |  - Verify Index |
               |  - USDC        |       |  - owner-verify |      |  - Reg. Queue   |
               |  - Scheduled Tx|       |  - broker-verify|      |                 |
-              |                |       |  - broker-      |      |  Swarm          |
-              |                |       |    presence     |      |  - Deeds (enc.) |
-              |                |       |    (selfie)     |      |  - Photos       |
+              |  - IdentityBind|       |                 |      |  Swarm          |
+              |                |       |  + session proof|      |  - Deeds (enc.) |
+              |                |       |    at viewings  |      |  - Photos       |
               +---------+------+       +-----------------+      +-----------------+
                         |
                   Source of Truth
@@ -210,14 +210,14 @@ World ID is the gate into the system. No successful human verification = no way 
 
 | Moment | IDKit Action | Credential | Purpose |
 | --- | --- | --- | --- |
-| Owner lists a property | `owner-verify` | Passport/NFC (production); Simulator in demo | Ties the listing to a real, unique person. Prevents someone tokenising rights to a property they don't own. |
-| Broker joins | `broker-verify` | Proof of Human (selfie check) | Prevents one person running multiple broker wallets to hoard rooms or evade a bad record. Uniqueness, not identity. |
-| Tenant checks broker at a viewing | `broker-presence` | Proof of Human (fresh selfie check) | The key moment: proves the person physically present is the same human bound to the token-holder wallet. No reveal of identity — just a match. |
+| Owner lists a property | `owner-verify` (uniqueness) | Selfie Check | Ties the listing to a real, unique person. Prevents someone tokenising rights to a property they don't own. Passport is not available in World ID 4.0's documented credentials, so Selfie Check is the strongest documented option. |
+| Broker joins | `broker-verify` (uniqueness, `session_id: "create"`) | Selfie Check | Prevents one person running multiple broker wallets to hoard rooms or evade a bad record. Uniqueness, not identity. The same request mints the broker's session, used for every later viewing. |
+| Tenant checks broker at a viewing | **session proof** (`proveSession`), not an action | Selfie Check | The key moment. World ID 4.0 enforces one nullifier per person per action, so a repeated action cannot work — a returning broker proves continuity with a session proof instead. Continuity is established by matching `session_id` to the session bound to the token-holder wallet. No identity is revealed. |
 
 **How the selfie check works at a viewing:**
 
 1. Tenant opens the verify page and taps "Verify this broker."
-2. The broker completes a fresh World ID selfie check (action: `broker-presence`).
+2. The broker's client calls `IDKit.proveSession(savedSessionId)` with a fresh Selfie Check.
 3. Backend compares the new nullifier with the one stored for the token-holder wallet.
 4. **Green** = the broker is who they claim to be. **Red** = impostor.
 
@@ -386,7 +386,7 @@ View Room Details:
 At Viewing: Tap "Verify This Broker"
       |
       v
-Broker completes fresh selfie check (broker-presence)
+Broker proves saved session (proveSession + fresh Selfie Check)
       |
       v
 Backend: compare nullifier with token-holder's stored nullifier
@@ -438,7 +438,7 @@ GREEN: Broker is the token holder     RED: Impostor - do not proceed
 | `POST /api/registrar/:id/reject` | Updates Arkiv entity to `rejected` with reason |
 | `GET /api/registrar/:id/deed` | Registrar only: fetches and decrypts deed from Swarm |
 | `POST /api/listings/:id/issue` | Issues one ATS token per room to the owner (compliance configured); writes `RoomListing` entities to Arkiv |
-| `POST /api/presence/start` | Creates a viewing session for broker-presence check |
+| `POST /api/presence/:roomId/start` | Issues a stateless, HMAC-signed viewing challenge (nonce + short expiry); no storage |
 | `POST /api/presence/verify` | Checks broker's fresh nullifier against the token holder |
 | `GET /api/verify/:propertyId` | Arkiv query for room records, confirmed against `holderOf()` on Hedera |
 | Event listener (worker) | Watches `RoomSold`, `RoomFrozen`, `RoomBurned` events; updates Arkiv |
@@ -497,7 +497,7 @@ npm run dev
 - Node.js 18+
 - MetaMask configured for Hedera testnet (JSON-RPC relay)
 - Hedera testnet accounts with HBAR from the faucet
-- World Developer Portal app with three actions configured
+- World Developer Portal app with two actions configured (`owner-verify`, `broker-verify`), both created with `session_id: "create"`
 - Arkiv testnet access (chain ID 7794095)
 - Swarm Bee node or gateway with a funded postage batch
 
