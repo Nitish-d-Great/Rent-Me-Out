@@ -1,0 +1,13 @@
+{
+  "name": "rent-me-out",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@10.28.1",
+  "scripts": {
+    "dev": "pnpm --filter app dev",
+    "build": "pnpm --filter app build",
+    "start": "pnpm --filter app start",
+    "lint": "pnpm --filter app lint",
+    "typecheck": "pnpm --filter app typecheck"
+  }
+}
