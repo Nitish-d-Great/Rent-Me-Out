@@ -32,7 +32,7 @@ export function SiteFooter() {
               Frozen state example
             </Link>
             <Link href="/verify/rmo-3b-andheri?room=r1">Available room example</Link>
-            <span className="mono">World ID · broker-presence</span>
+            <span className="mono">World ID · session proof</span>
           </div>
 
           <div className="footer-col">

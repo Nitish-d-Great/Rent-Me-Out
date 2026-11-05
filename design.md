@@ -153,7 +153,7 @@ Loop behaviour:
 
 This is the second most important moment after the flat. It must be **truthful about what is real**.
 
-What actually happens (from the project docs): the user completes a World ID check through IDKit. World's proof is generated on the user's side, our **backend** validates it with World's verification API, and we store the **nullifier** (a per-action unique identifier) against the wallet. For `broker-presence`, we compare the fresh nullifier to the one bound to the token-holder wallet.
+What actually happens (from the project docs): the user completes a World ID check through IDKit. World's proof is generated on the user's side, our **backend** validates it with World's verification API, and we store the **nullifier** (a per-action unique identifier) against the wallet. For presence at a viewing, the broker proves their saved session (`IDKit.proveSession`) and we match the returned `session_id` against the session bound to the token-holder wallet. We do **not** compare nullifiers here: a session proof returns `session_nullifier` purely for replay protection, and the World docs state it must not be used as an account identifier.
 
 So the animation shows the *idea* of a zero-knowledge proof, not our own proof generation:
 

@@ -81,7 +81,7 @@ flowchart LR
 | Hedera RentalRegistry + ATS | Authoritative property/room status, rights period, token lifecycle, holder eligibility | Full address and deed data |
 | Arkiv | Searchable application/listing index and public non-sensitive status | Deed contents, cleartext storage pointer, precise private address |
 | Swarm + key vault | Store encrypted deeds; restrict decryption to registrar workflow | Publicly readable documents or keys |
-| World ID | Prove personhood/uniqueness and support a fresh broker-presence action | Raw ID image or reusable proof in application storage |
+| World ID | Prove personhood/uniqueness at onboarding, and support a fresh session proof at each viewing | Raw ID image, session ID exposed to other users, or reusable proof in application storage |
 
 ## 2. Product and verification flows
 
@@ -175,8 +175,8 @@ sequenceDiagram
   Prover-->>App: ZK proof; no address or deed returned
   App->>Verify: Verify proof locally against current root and room claim
   Verify-->>Tenant: Property approval proof valid / invalid
-  Tenant->>App: Start a one-time broker-presence session
-  Broker->>ID: Complete fresh broker-presence action
+  Tenant->>App: Start a one-time viewing challenge (signed nonce)
+  Broker->>ID: Prove saved session (fresh session proof)
   ID-->>App: Presence proof
   App->>Registry: Re-read current token holder and status
   App-->>Tenant: Green if holder/person binding matches; red otherwise
@@ -299,7 +299,7 @@ The browser verifies the ZK proof locally. The backend supplies a proof and chai
 2. Implement property commitment generation and the registrar approval/root update as a standalone service.
 3. Build a small circuit for Merkle inclusion and room-commitment derivation; use a reviewed ZK stack and existing audited primitives where possible.
 4. Publish the root/version in RentalRegistry and add a browser verifier with a pinned verification key.
-5. Add a QR verification page that reads current token state from Hedera, fetches the proof, verifies it locally, and then separately runs the World ID broker-presence flow.
+5. Add a QR verification page that reads current token state from Hedera, fetches the proof, verifies it locally, and then separately runs the World ID session-proof presence flow.
 6. Add revocation/freeze, stale-root rejection, challenge expiry, and clear UI states.
 7. Only after the demo flow works, evaluate address disclosure to a specific tenant, client-side proving, private broker identity, and on-chain proof verification.
 
