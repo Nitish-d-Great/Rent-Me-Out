@@ -52,3 +52,20 @@ export const unboundAllowlist: Allowlist = {
   isAllowed: () => Promise.reject(new Error("ATS allowlist is not wired yet")),
   add: () => Promise.reject(new Error("ATS allowlist is not wired yet")),
 };
+
+/**
+ * Port onto room rights on Hedera (`RentalRegistry`). Presence needs the room's
+ * current holder from the chain -- never from the client, which could claim any wallet.
+ */
+export interface RoomRights {
+  /** The broker holding valid rights, or null. Unsold rooms return null even though
+   *  the owner holds the token: holding the token is not holding rental rights. */
+  holderOf(roomId: string): Promise<`0x${string}` | null>;
+  /** Sold, unfrozen, and within the period. */
+  isValid(roomId: string): Promise<boolean>;
+}
+
+export const unboundRoomRights: RoomRights = {
+  holderOf: () => Promise.reject(new Error("RentalRegistry is not wired yet")),
+  isValid: () => Promise.reject(new Error("RentalRegistry is not wired yet")),
+};

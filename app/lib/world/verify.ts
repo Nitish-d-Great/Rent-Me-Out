@@ -131,19 +131,41 @@ export async function verifyUniqueness(
 }
 
 /**
- * Presence at a viewing. The caller must already have checked the stateless
- * challenge, and must afterwards confirm that `session_id` matches the session bound
- * to the room's current holder on-chain.
+ * Presence at a viewing.
+ *
+ * Two checks the caller still owes after this returns:
+ *   1. the stateless challenge (see `challenge.ts`) must already have been verified;
+ *   2. `sessionKey(result.session_id)` must be bound on-chain to the room's current
+ *      holder from `holderOf()`.
+ *
+ * We deliberately do NOT compare raw session IDs here. Only hashes are stored on-chain,
+ * so there is no plaintext session ID server-side to compare against -- the binding
+ * check is the on-chain hash lookup in step 2.
+ *
+ * `expectedNonce` is the replay defence. The viewing challenge is single-use by virtue
+ * of being freshly random per viewing, so a captured proof from an earlier viewing
+ * carries a stale nonce and fails here.
+ *
+ * CAVEAT: the World docs do not explicitly state that the nonce on the IDKit result
+ * equals the `rp_context` nonce, though the field naming implies it. If this check ever
+ * rejects a known-good proof, that assumption is where to look first.
  */
 export async function verifySessionProof(
   result: SessionResult,
-  expectedSessionId: string,
+  expectedNonce: string,
 ): Promise<VerifyOutcome> {
-  if (!result.session_id || result.session_id !== expectedSessionId) {
+  if (!result.session_id) {
     return {
       ok: false,
-      code: "session_mismatch",
-      detail: "Proof was not issued against this account's session",
+      code: "missing_session",
+      detail: "Proof carries no session_id",
+    };
+  }
+  if (result.nonce !== expectedNonce) {
+    return {
+      ok: false,
+      code: "nonce_mismatch",
+      detail: "Proof was not issued for this viewing",
     };
   }
   const { environment } = serverConfig();

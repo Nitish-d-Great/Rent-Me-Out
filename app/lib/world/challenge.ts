@@ -60,3 +60,91 @@ export function verifyChallenge(
   }
   return { ok: true };
 }
+
+/* -------------------------------------------------------------------------- */
+/* Signed receipts                                                             */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * The presence check is inherently two-device: the broker's session handle lives on the
+ * broker's phone (the tenant must never see it), but the tenant's phone is the screen
+ * that has to show green or red. A broker simply showing their own screen is spoofable,
+ * which would defeat the point.
+ *
+ * So the server signs the outcome. The broker's phone carries an opaque receipt to the
+ * tenant's phone, and the tenant's page has the server check it. The broker cannot forge
+ * one without the secret, and cannot replay an older genuine one because the receipt is
+ * bound to the nonce the tenant just issued.
+ *
+ * Still no stored state: the server recomputes the MAC rather than remembering anything.
+ */
+
+const RECEIPT_TTL_SECONDS = 120;
+/** 128 bits is ample and keeps the QR small. */
+const MAC_HEX_LEN = 32;
+
+export interface Receipt {
+  roomId: string;
+  nonce: string;
+  match: boolean;
+  reason?: string;
+  issuedAt: number;
+}
+
+function receiptMac(secret: string, payload: string): string {
+  return createHmac("sha256", secret)
+    .update(`receipt|${payload}`)
+    .digest("hex")
+    .slice(0, MAC_HEX_LEN);
+}
+
+/** Compact, URL-safe, QR-friendly: `rmo1.<base64url(json)>.<mac>` */
+export function issueReceipt(secret: string, receipt: Receipt): string {
+  const payload = Buffer.from(JSON.stringify(receipt), "utf8").toString("base64url");
+  return `rmo1.${payload}.${receiptMac(secret, payload)}`;
+}
+
+export type ReceiptFailure =
+  | "malformed"
+  | "bad-mac"
+  | "expired"
+  | "room-mismatch"
+  | "nonce-mismatch";
+
+/**
+ * Verified against the nonce the TENANT issued, so a receipt from an earlier viewing
+ * cannot be presented at this one.
+ */
+export function verifyReceipt(
+  secret: string,
+  token: string,
+  expectedRoomId: string,
+  expectedNonce: string,
+): { ok: true; receipt: Receipt } | { ok: false; reason: ReceiptFailure } {
+  const parts = token.split(".");
+  if (parts.length !== 3 || parts[0] !== "rmo1") {
+    return { ok: false, reason: "malformed" };
+  }
+  const [, payload, mac] = parts;
+
+  const expected = Buffer.from(receiptMac(secret, payload), "hex");
+  const actual = Buffer.from(mac, "hex");
+  if (expected.length !== actual.length || !timingSafeEqual(expected, actual)) {
+    return { ok: false, reason: "bad-mac" };
+  }
+
+  let receipt: Receipt;
+  try {
+    receipt = JSON.parse(Buffer.from(payload, "base64url").toString("utf8")) as Receipt;
+  } catch {
+    return { ok: false, reason: "malformed" };
+  }
+
+  if (receipt.roomId !== expectedRoomId) return { ok: false, reason: "room-mismatch" };
+  if (receipt.nonce !== expectedNonce) return { ok: false, reason: "nonce-mismatch" };
+  if (receipt.issuedAt + RECEIPT_TTL_SECONDS < Math.floor(Date.now() / 1000)) {
+    return { ok: false, reason: "expired" };
+  }
+
+  return { ok: true, receipt };
+}

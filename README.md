@@ -202,17 +202,21 @@ Hedera is the single source of truth for who holds the right to rent each room. 
 
 ### World — Human Verification via Selfie Check
 
-**Track:** Best Use of IDKit ($2,500)
+**Track:** Best Use of IDKit ($2,500 — up to 2 teams at $1,250 each)
 
 World ID is the gate into the system. No successful human verification = no way to list a property or hold a room token. We use the **selfie check** concept for a face-based, real-time proof of personhood.
 
 **Three trust moments:**
 
-| Moment | IDKit Action | Credential | Purpose |
+| Moment | What must be true | Credential | Why this is the *minimum sufficient* assurance |
 | --- | --- | --- | --- |
-| Owner lists a property | `owner-verify` (uniqueness) | Selfie Check | Ties the listing to a real, unique person. Prevents someone tokenising rights to a property they don't own. Passport is not available in World ID 4.0's documented credentials, so Selfie Check is the strongest documented option. |
-| Broker joins | `broker-verify` (uniqueness, `session_id: "create"`) | Selfie Check | Prevents one person running multiple broker wallets to hoard rooms or evade a bad record. Uniqueness, not identity. The same request mints the broker's session, used for every later viewing. |
-| Tenant checks broker at a viewing | **session proof** (`proveSession`), not an action | Selfie Check | The key moment. World ID 4.0 enforces one nullifier per person per action, so a repeated action cannot work — a returning broker proves continuity with a session proof instead. Continuity is established by matching `session_id` to the session bound to the token-holder wallet. No identity is revealed. |
+| **Owner tokenises a property** (`owner-verify`) | One human cannot hold two owner identities, or re-register after a rejection | **Proof of Human** (ID 1) | The registrar already verifies the deed off-chain, so World's job here is *not* document checking — it is person-uniqueness. PoH is the only credential documented as *"each human can only have one PoH credential."* **Passport/NFC (9303) would be weaker and reveal more**: its Sybil resistance is per *document*, not per person, so two passports means two World IDs. We need nothing about who the owner is, only that they are one unique human. |
+| **Broker joins** (`broker-verify`, `session_id: "create"`) | One person cannot run several broker wallets to hoard rooms or escape a bad record | **Proof of Human** (ID 1) | The fraud is precisely one-person-many-accounts, so one-person-one-account is exactly — and only — what is required. No document data, no attributes, no name: collecting any of it would be disproportionate to the decision being made. The same request mints the session used at every later viewing. |
+| **Broker proves presence at a viewing** (session proof via `proveSession`) | The person standing here is live, now, and continuous with the enrolled broker who holds the rights | **Selfie Check / Proof of Presence** (ID 11) | Not a fallback — the correct credential. Three reasons: it is the only credential with documented support for *repeated* verification (World ID enforces one nullifier per person per action, so a repeated action is impossible); "Proof of Presence" is literally the property this moment needs; and the strong uniqueness claim was already made at enrollment and bound on-chain, so this check needs liveness and continuity, not a second uniqueness proof. Its medium assurance is proportionate **because it is the second factor, not the first**. |
+
+**What we demoed, and why it differs.** The two enrollment moments are implemented with **Selfie Check**, not Proof of Human, for one reason: PoH requires a physical Orb visit, which is not obtainable during a hackathon. Selfie Check is the only credential with a documented test path. The substitution is a single preset argument — `selfieCheck()` in place of `proofOfHuman()` — and the verify flow, nullifier binding, and on-chain `IdentityBinding` contract are identical either way. The viewing check is **not** substituted; it is the design, as built.
+
+**Considered and rejected:** *Identity Check* (preview) can attest `full_name`, `nationality` and `minimum_age` without exposing the underlying document, which would let the registrar cross-check the deed name cryptographically instead of by eye. That is the natural production upgrade for owner verification. It is preview-only and requires contacting World, so it is out of scope here and named as future work rather than claimed.
 
 **How the selfie check works at a viewing:**
 
@@ -525,15 +529,96 @@ npm run dev
 
 ## World ID Integration Debrief
 
-**Time to first successful verification:** TBD
+### Time to first successful verification
 
-**Integration experience:** TBD
+**TBD** — pending Developer Portal setup and sandbox access. To be replaced with the real
+figure, including time lost to the access path described under friction (5).
 
-**Friction points:** TBD
+### Integration experience
 
-**Missing capability or docs:** TBD
+We integrated against World ID 4.0: two uniqueness actions for enrollment, plus session
+proofs for the broker's repeated presence checks at viewings. Verification is server-side
+only, and identity state is kept on-chain in `IdentityBinding.sol` rather than in a
+private database, so uniqueness is publicly verifiable rather than merely asserted by us.
+The shape of the API was a good fit once understood. Most of our cost was in
+*establishing* what the current contract is.
 
-**The one improvement that would help most:** TBD
+### Friction encountered
+
+1. **v2 vs v4 ambiguity cost us the most time.** We planned against
+   `/api/v2/verify/{app_id}`, which is referenced by a live error code
+   (`app_not_migrated` → *"Please use the v2 verify endpoint"*) but is documented
+   nowhere. Confirming that v4 at `developer.world.org/api/v4/verify/{rp_id}` is current,
+   and that v2 is legacy rather than parallel, took longer than writing the integration.
+2. **We designed a flow that cannot exist.** Our plan had a third action,
+   `broker-presence`, configured to allow repeat verifications. There is no
+   max-verifications setting — one nullifier per person per action is enforced. Session
+   proofs are the right answer, but the session-proofs page is not linked from the
+   credentials page or the API reference, which is where someone planning repeated
+   verification will look. We found it only after the design had already been written.
+3. **One credential, three names.** Credential 11 is titled "Proof of Presence" on its
+   own page, "Selfie Check" in the session docs and this bounty, and `selfieCheck` as an
+   IDKit preset.
+4. **Identifier terminology is inconsistent across pages.** The OpenAPI reference uses
+   `issuer_schema_id`; the credential pages label the same number "ID"; only
+   `CredentialRequest("selfie")` exposes a string identifier. We could not determine the
+   identifier strings for Proof of Human or Passport from the docs at all.
+5. **Test access is the hardest practical barrier.** The word "Simulator" does not appear
+   in the 4.0 docs we read, though it is referenced elsewhere. The only documented test
+   path is a Selfie-Check-only sandbox behind TestFlight or an unlisted Google Play link.
+   Proof of Human needs a physical Orb visit. For a timeboxed build this forced a
+   credential substitution for demo purposes, documented above.
+6. **No server-side verify helper.** `verifyCloudProof` does not exist in 4.x, so every
+   integrator hand-rolls the fetch, the error mapping, and the environment assertion. The
+   last is the dangerous one: it is easy to omit, and omitting it means a **staging proof
+   is silently accepted in production**. We assert `environment` both before and after the
+   call for that reason.
+7. **`sybil_score` ships without usable thresholds** — correctly labelled *"not validated
+   decision thresholds"*, which is honest, but it leaves every integrator inventing a
+   threshold for an abuse signal independently.
+
+### Missing capability or documentation
+
+1. **Session support is undocumented for Proof of Human and Passport.** Every session
+   example uses Selfie Check. A product needing high assurance *and* repeated
+   verification has no documented path, which is why our design splits across two
+   credentials and has to explain itself.
+2. **It is not stated whether a session proof is cryptographically bound to the
+   credential holder who created the session.** For us this is the gap that matters most
+   — see the improvement below.
+3. **No duplicate-nullifier error code.** The docs rightly say duplicate detection is the
+   relying party's job, but there is no documented code distinguishing that rejection.
+4. **What each credential reveals to the relying party is not enumerated.** Making a
+   data-minimisation argument required inferring "no identity is revealed" from the word
+   *anonymous* rather than reading a field list.
+5. **No multi-credential request or credential fallback.** "Unavailable credential" is
+   listed as a valid alternative path in this bounty, but the docs describe no handling
+   for it beyond legacy 3.0 fallbacks inside presets.
+6. **Whether the nonce on the IDKit result equals the `rp_context` nonce is not stated.**
+   We rely on that equality as the replay defence for the viewing check; the field naming
+   implies it but nothing confirms it.
+
+### The one improvement with the greatest impact
+
+**State on the session-proofs page whether a session proof is cryptographically bound to
+the human who created the session — and if it is, expose a stable per-person handle a
+relying party can compare across sessions without it being an account identifier.**
+
+Today there is no documented way to answer *"is this the same human as last time?"*
+`session_nullifier` is explicitly *"not the account identifier"*, `session_id` is
+relying-party bookkeeping that we store ourselves, and the enrollment nullifier cannot be
+compared against later session responses. Yet that question is the entire point of
+repeated verification.
+
+For us the consequence is concrete. A tenant standing at a door wants to know the broker
+in front of them is the human who bought the rights. We can prove the presented session
+is bound to the rights-holding wallet, and we ship exactly that claim and no more. With
+that one guarantee documented, the same flow would become a cryptographic answer instead
+of a product assumption — and we would not have had to write a caveat into our contract
+telling future readers not to overstate it.
+
+*Runner-up:* a 4.0 equivalent of `verifyCloudProof` that bakes in the environment
+assertion, so that failure mode stops being each integrator's to rediscover.
 
 ---
 
