@@ -40,8 +40,7 @@ export interface Property {
   description: string;
 }
 
-// Set NEXT_PUBLIC_SITE_URL at build time to the final ENS URL, e.g.
-// https://rentmeout.eth.limo
+// Set NEXT_PUBLIC_SITE_URL in the deployment environment for deep links/QRs.
 export const siteUrl =
   process.env.NEXT_PUBLIC_SITE_URL?.replace(/\/$/, "") ??
   "https://rentmeout.xyz";

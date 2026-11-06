@@ -69,8 +69,8 @@ const stack = [
   {
     name: "Swarm",
     role: "Private documents",
-    what: "The deed is encrypted before upload. Only an audited registrar route can decrypt it.",
-    tag: "registrar-only access",
+    what: "Deeds are encrypted before upload. An allowlisted registrar reviews them after a secure key-file handoff.",
+    tag: "encrypted registrar review",
   },
   {
     name: "ZK verifier",

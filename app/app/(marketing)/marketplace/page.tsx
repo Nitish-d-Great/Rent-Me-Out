@@ -39,7 +39,7 @@ async function loadListings(): Promise<{ rooms: RoomCardData[]; live: boolean }>
 export const metadata: Metadata = {
   title: "Browse rooms",
   description:
-    "Available room-rights listings with a registrar-approved property and one verified broker per room.",
+    "Browse public room-rights listings from Arkiv and verify current rights on Hedera.",
 };
 
 export default async function MarketplacePage() {
@@ -52,8 +52,8 @@ export default async function MarketplacePage() {
           <p className="eyebrow">Public marketplace</p>
           <h1>One room. One holder.</h1>
           <p>
-            Room rights from registrar-approved properties. Prices are one-time
-            payments to the owner for the whole period — not monthly rent.
+            Room-right listings are discovered through Arkiv. Prices are
+            one-time payments to the owner for the whole period — not monthly rent.
           </p>
         </div>
         <div className="page-head__actions">
@@ -74,10 +74,10 @@ export default async function MarketplacePage() {
       )}
 
       <p className="verify-footnote" style={{ maxWidth: 720 }}>
-        A listing only appears after the property is approved on Hedera and the
-        room token exists. Arkiv supplies discovery; Hedera confirms the current
-        holder and lifecycle. Tenant rent and lease terms are agreed with the
-        broker outside this product.
+        Arkiv records are public discovery data and can be written by anyone.
+        Confirm property approval, token ownership, and lifecycle on Hedera before
+        relying on a listing. Tenant rent and lease terms are agreed with the broker
+        outside this product.
       </p>
     </div>
   );

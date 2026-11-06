@@ -253,17 +253,19 @@ This is the core trust moment of the product: a tenant, standing in a room, can 
 
 **Track:** Build on Arkiv, from scratch ($4,000 + $500 Swarm bonus)
 
-Arkiv replaces a traditional database. Its built-in entity expiry matches our time-bound tokens: a listing for Jan–Mar disappears from Arkiv on 31 March with no cleanup code.
+Arkiv is the public discovery index. When an owner creates room listings, the form asks how many days each record should remain queryable. It defaults to a duration that covers the selected rental end date and rejects shorter values. Arkiv expiry removes an entity from active queries; it must not be treated as guaranteed erasure of every historical copy.
 
 **Why Arkiv over Postgres:**
-If listings sat in a database, only our app could read them and they'd need cleanup jobs. On Arkiv, owners own their listing data, anyone can query the verify index without our permission, and records expire with the rights they describe.
+If listings sat in a database, only our app could read them and they'd need cleanup jobs. On Arkiv, anyone can query the public index without our permission, and an owner-selected entity lifetime can keep the record available through the rental period.
 
 **Public Arkiv entities:** treat every attribute, query result, and pointer as public. Keep documents, exact address, owner legal identity, and key-bearing Swarm references out of Arkiv.
+
+**Current implementation:** `app/lib/arkiv.ts` defines the named room-listing schema, Rabdi public client, browser-wallet client, create helper, and active listing query. The owner listing flow writes one entity per room; the marketplace reads those records and merges them with sample results. Property applications are also written to Arkiv with public-safe fields only. Deeds are encrypted in the browser and uploaded as ciphertext to the Swarm public gateway; the reference and key stay in the downloaded key file. A registrar wallet from `NEXT_PUBLIC_REGISTRAR_WALLETS` can import the file, decrypt the deed in the browser, and sign an approval/rejection record on Arkiv. The owner must send the key file to the registrar through a secure channel. This is a demo handoff, not a KMS-backed access service or production registrar authorization system. The “owner verified” gate and Hedera approval/mint remain demo or future integrations. An Arkiv record alone is not proof that a property or rental right is valid.
 
 | Entity | Public-safe fields | Expires |
 | --- | --- | --- |
 | `PropertyApplication` | opaque application ID, owner wallet/pseudonym, salted property commitment, status, schema/root version | 30 days after decision |
-| `RoomListing` | opaque room/property commitment, room index/label, coarse locality, sanitized description, dates, price, token ID, status | Listing end date |
+| `RoomListing` | opaque room/property identifier, room label, coarse locality, sanitized description, dates, price, status | Owner-selected day count, no earlier than rental end |
 | `RightsRecord` | opaque room ID, holder wallet, validity, token reference, Hedera transaction ID | Listing end date |
 | `BrokerProfile` (optional) | wallet and public verification status only | None / yearly |
 
@@ -295,7 +297,7 @@ After confirmation, delete temporary tenant/session records, the private deed co
 
 Arkiv entities can be deleted by their owner, so the entities that need automated cleanup must be created by a cleanup-capable platform wallet. Swarm does not provide general deletion of uploaded content: destroy the controlled decryption key and remove local pointers/pins (crypto-erasure), while recognizing that downloaded copies or network ciphertext may persist. These systems' deletion capabilities differ; see [Arkiv entity deletion](https://docs.arkiv.network/writing/change/) and [Swarm's storage model](https://docs.ethswarm.org/docs/develop/dynamic-content/).
 
-> **Build status:** Arkiv/Swarm is part of the project data flow. The ZK property-attestation proof is the next planned layer; do not describe it as implemented until the proof circuit, root publication, and in-browser verification are deployed.
+> **Build status:** Room listing creation and marketplace discovery use Arkiv Rabdi from the browser wallet. The record contains public-safe listing fields only and expires according to the owner-selected retention period. Hedera token issuance and the ZK property-attestation proof are separate planned integrations; do not describe them as completed until the contract flow, proof circuit, root publication, and in-browser verification are deployed.
 
 ---
 

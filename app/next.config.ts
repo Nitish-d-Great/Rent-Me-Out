@@ -2,11 +2,11 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   reactStrictMode: true,
-  // Swarm serves static files only, so export the whole site to `out/`.
-  output: "export",
-  // Emit `route/index.html` so Swarm gateway directory indexes resolve
-  // clean URLs without server rewrites.
-  trailingSlash: true,
+  // The local TypeScript 6 CLI emits no --showConfig output when Next pipes
+  // stdout in this environment; keep Next's compiler-API checker enabled.
+  experimental: {
+    useTypeScriptCli: false,
+  },
   images: {
     unoptimized: true,
   },
