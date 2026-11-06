@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 import { useWallet } from "@/components/providers";
+import { useWalletVerified } from "@/lib/chain/use-owner";
 import { buyRoom, explainBuyError, type BuyStage } from "@/lib/chain/buy";
 import { VerifyBadge } from "@/components/ui/verify-badge";
 import { WorldIdButton } from "@/components/ui/world-id-button";
@@ -13,7 +14,7 @@ type Step = "idle" | "processing" | "done";
 
 export function BuyPanel({ room, live = false }: { room: Room; live?: boolean }) {
   const { connected, connect, address } = useWallet();
-  const [verified, setVerified] = useState(false);
+  const { verified, confirm: setVerified } = useWalletVerified(address);
   const [step, setStep] = useState<Step>("idle");
   const [error, setError] = useState<string | null>(null);
   const [stage, setStage] = useState<BuyStage | null>(null);
@@ -54,6 +55,9 @@ export function BuyPanel({ room, live = false }: { room: Room; live?: boolean })
       });
       setTxHash(hash);
       setStep("done");
+      // The sale is final on Hedera. Updating the Arkiv index only affects search, so a
+      // failure here must not read as a failed purchase.
+      void fetch(`/api/rooms/${room.id}/sync`, { method: "POST" }).catch(() => undefined);
     } catch (err) {
       setError(explainBuyError(err));
       setStep("idle");
@@ -181,7 +185,7 @@ export function BuyPanel({ room, live = false }: { room: Room; live?: boolean })
                 </a>
               )}
               <Link
-                href={`/broker/rights`}
+                href="/broker"
                 className="text-link"
                 style={{ marginTop: 10 }}
               >
@@ -216,7 +220,7 @@ export function BuyPanel({ room, live = false }: { room: Room; live?: boolean })
                 <WorldIdButton
                   action="broker-verify"
                   label="Verify with World ID"
-                  onVerified={() => setVerified(true)}
+                  onVerified={setVerified}
                 />
               </>
             )}

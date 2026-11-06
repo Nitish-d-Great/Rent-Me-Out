@@ -3,49 +3,51 @@
 import Link from "next/link";
 import { useMemo, useState } from "react";
 import { readIdentity } from "@/lib/chain/owner-identity";
+import { useOwnerApplications, useWalletVerified } from "@/lib/chain/use-owner";
 import { explainListingError, proveListing, roomTag } from "@/lib/chain/prove-listing";
 
-/** Used only if no wallet is connected; the payout address must still be well-formed. */
-const ZERO_PAYOUT = "0x000000000000000000000000000000000000dEaD";
 import { useWallet } from "@/components/providers";
 import { VerifyBadge } from "@/components/ui/verify-badge";
 import { WorldIdButton } from "@/components/ui/world-id-button";
-import {
-  demo,
-  formatDate,
-  formatUsdc,
-  property,
-  rooms,
-} from "@/lib/data";
+import { formatDate, formatUsdc } from "@/lib/data";
 
 type Phase = "idle" | "issuing" | "issued";
 
-const overlapsActive = (start: string, end: string) =>
-  new Date(start) <= new Date("2027-03-31") &&
-  new Date(end) >= new Date("2027-01-01");
+interface PublishedRoom {
+  listingId?: string;
+  token?: string;
+  transactionHash?: string;
+  indexed?: boolean;
+  name: string;
+  price: string;
+}
+
+const DAY_MS = 86_400_000;
+const isoDate = (ms: number) => new Date(ms).toISOString().slice(0, 10);
 
 export function ListingForm() {
   const { connected, connect, address } = useWallet();
-  const [verified, setVerified] = useState(false);
-  const [selected, setSelected] = useState<Record<string, boolean>>({
-    r1: true,
-    r2: true,
-    r3: true,
-  });
-  const [prices, setPrices] = useState<Record<string, string>>({
-    r1: "850",
-    r2: "980",
-    r3: "820",
-  });
-  const [start, setStart] = useState("2027-04-01");
-  const [end, setEnd] = useState("2027-06-30");
+  const { verified, confirm: setVerified } = useWalletVerified(address);
+  const { applications, state: applicationsState, hasIdentity } = useOwnerApplications();
+  const approved = applications.filter((app) => app.status === "approved");
+  const [applicationId, setApplicationId] = useState<string | null>(null);
+  const application =
+    approved.find((app) => app.applicationId === applicationId) ?? approved[0];
+
+  const [selected, setSelected] = useState<Record<string, boolean>>({ "room-1": true });
+  const [prices, setPrices] = useState<Record<string, string>>({});
+  const [start, setStart] = useState(() => isoDate(Date.now() + DAY_MS));
+  const [end, setEnd] = useState(() => isoDate(Date.now() + 91 * DAY_MS));
   const [phase, setPhase] = useState<Phase>("idle");
   const [listingError, setListingError] = useState<string | null>(null);
   const [progress, setProgress] = useState<string | null>(null);
-  const [txHashes, setTxHashes] = useState<string[]>([]);
+  const [published, setPublished] = useState<PublishedRoom[]>([]);
 
+  const rooms = Array.from({ length: application?.rooms ?? 0 }, (_, index) => ({
+    id: `room-${index + 1}`,
+    name: `Room ${index + 1}`,
+  }));
   const chosen = rooms.filter((room) => selected[room.id]);
-  const overlap = overlapsActive(start, end) && chosen.length > 0;
   const invalidDates = new Date(end) <= new Date(start);
   const total = chosen.reduce(
     (sum, room) => sum + Number(prices[room.id] || 0),
@@ -54,8 +56,8 @@ export function ListingForm() {
   const ready =
     connected &&
     verified &&
+    Boolean(application) &&
     chosen.length > 0 &&
-    !overlap &&
     !invalidDates &&
     chosen.every((room) => Number(prices[room.id]) > 0);
 
@@ -79,9 +81,9 @@ export function ListingForm() {
     if (!ready) return;
 
     const identity = readIdentity();
-    if (!identity) {
+    if (!identity || !application) {
       setListingError(
-        "This device has no owner identity. Submit a property application first.",
+        "This device has no approved owner identity. Submit a property application first.",
       );
       return;
     }
@@ -89,22 +91,23 @@ export function ListingForm() {
     setPhase("issuing");
     setListingError(null);
     setProgress("Building the membership proof — this can take a moment…");
-    const published: string[] = [];
+    const done: PublishedRoom[] = [];
 
     try {
       for (const room of chosen) {
         const terms = {
-          room: roomTag(identity.seed, room.id),
+          // Scoped to the application, so each room can be listed once per approval.
+          room: roomTag(identity.seed, `${application.applicationId}:${room.id}`),
           start: BigInt(Math.floor(new Date(start).getTime() / 1000)),
           end: BigInt(Math.floor(new Date(end).getTime() / 1000)),
           price: BigInt(Math.round(Number(prices[room.id]) * 1e6)),
-          payout: (address ?? ZERO_PAYOUT) as `0x${string}`,
+          payout: address as `0x${string}`,
         };
 
         setProgress(`Proving approval for ${room.name}…`);
         const proof = await proveListing(terms);
 
-        setProgress(`Publishing ${room.name} to Hedera…`);
+        setProgress(`Issuing the ATS token for ${room.name} on Hedera…`);
         const res = await fetch("/api/listings", {
           method: "POST",
           headers: { "content-type": "application/json" },
@@ -114,18 +117,36 @@ export function ListingForm() {
             end: Number(terms.end),
             price: terms.price.toString(),
             payout: terms.payout,
+            // Public on Arkiv. The city makes a room searchable; the locality stays private.
+            city: application.city,
+            label: `${room.name} · ${application.city}`,
           }),
         });
-        const data = (await res.json()) as { ok?: boolean; error?: string; transactionHash?: string };
+        const data = (await res.json()) as {
+          ok?: boolean; error?: string; transactionHash?: string;
+          listingId?: string; token?: string; indexed?: boolean;
+        };
         if (!res.ok || !data.ok) throw new Error(data.error ?? "listing_failed");
-        if (data.transactionHash) published.push(data.transactionHash);
+        done.push({
+          listingId: data.listingId,
+          token: data.token,
+          transactionHash: data.transactionHash,
+          indexed: data.indexed,
+          name: room.name,
+          price: prices[room.id],
+        });
       }
 
-      setTxHashes(published);
+      setPublished(done);
       setPhase("issued");
     } catch (err) {
-      setListingError(explainListingError(err));
-      setPhase("idle");
+      // Rooms published before the failure are on-chain, so they must still be shown.
+      setPublished(done);
+      setListingError(
+        `${explainListingError(err)}${done.length ? ` ${done.length} room(s) were already published.` : ""}`,
+      );
+      if (done.length) setPhase("issued");
+      else setPhase("idle");
     } finally {
       setProgress(null);
     }
@@ -145,20 +166,9 @@ export function ListingForm() {
             </span>
           </div>
           <div className="panel__body">
-            {txHashes.length > 0 && (
-              <p className="micro" style={{ marginBottom: 12 }}>
-                {txHashes.map((hash) => (
-                  <a
-                    key={hash}
-                    href={`https://hashscan.io/testnet/transaction/${hash}`}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="mono"
-                    style={{ display: "block", wordBreak: "break-all" }}
-                  >
-                    {hash}
-                  </a>
-                ))}
+            {listingError && (
+              <p className="micro" style={{ color: "crimson", marginBottom: 12 }}>
+                ● {listingError}
               </p>
             )}
             <div className="notice notice--verified">
@@ -167,52 +177,60 @@ export function ListingForm() {
               </span>
               <div>
                 <strong>
-                  {chosen.length} room tokens minted · {dateLabel}
+                  {published.length} room {published.length === 1 ? "token" : "tokens"} issued · {dateLabel}
                 </strong>
                 <p>
-                  Each room has its own supply-1 token and an Arkiv listing that
-                  expires with the period. The public page is live for each room.
+                  Each room has its own supply-1 ATS token. Its Arkiv listing is searchable
+                  now and expires with the rental period.
                 </p>
               </div>
             </div>
 
-            <div className="detail-meta" style={{ marginTop: 22 }}>
-              <div>
-                <span className="micro">Total one-time value</span>
-                <strong>{formatUsdc(total)} USDC</strong>
-              </div>
-              <div>
-                <span className="micro">Room tokens</span>
-                <strong>{chosen.length}</strong>
-              </div>
-              <div>
-                <span className="micro">Listing transaction</span>
-                <strong className="mono" style={{ fontSize: 10 }}>
-                  0.0.5941282@1778…945
-                </strong>
-              </div>
-              <div>
-                <span className="micro">Approved-set root</span>
-                <strong className="mono">{demo.propertyRoot} · v{demo.rootVersion}</strong>
-              </div>
-            </div>
-
             <div className="stack-16" style={{ marginTop: 22 }}>
-              {chosen.map((room) => (
-                <div className="between panel panel--pad" key={room.id}>
+              {published.map((room) => (
+                <div className="between panel panel--pad" key={room.listingId ?? room.name}>
                   <div>
                     <strong>{room.name}</strong>
                     <p className="small dim" style={{ marginTop: 4 }}>
-                      {formatUsdc(Number(prices[room.id]))} USDC · {dateLabel}
+                      {formatUsdc(Number(room.price))} USDC · {dateLabel}
                     </p>
+                    {room.indexed === false && (
+                      <p className="micro" style={{ color: "crimson", marginTop: 4 }}>
+                        ● On Hedera, but not indexed on Arkiv, so it may not appear in search.
+                      </p>
+                    )}
+                    {room.token && (
+                      <a
+                        href={`https://hashscan.io/testnet/contract/${room.token}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="mono micro"
+                        style={{ display: "block", marginTop: 4 }}
+                      >
+                        ATS token {room.token.slice(0, 10)}…
+                      </a>
+                    )}
+                    {room.transactionHash && (
+                      <a
+                        href={`https://hashscan.io/testnet/transaction/${room.transactionHash}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="mono micro"
+                        style={{ display: "block", marginTop: 2 }}
+                      >
+                        Transaction {room.transactionHash.slice(0, 10)}…
+                      </a>
+                    )}
                   </div>
-                  <Link
-                    href={`/marketplace/${room.id}`}
-                    className="text-link"
-                    style={{ fontSize: 11.5 }}
-                  >
-                    Public listing
-                  </Link>
+                  {room.listingId && (
+                    <Link
+                      href={`/marketplace/${room.listingId}`}
+                      className="text-link"
+                      style={{ fontSize: 11.5 }}
+                    >
+                      Public listing
+                    </Link>
+                  )}
                 </div>
               ))}
             </div>
@@ -221,23 +239,12 @@ export function ListingForm() {
               <Link href="/owner" className="btn">
                 Back to dashboard
               </Link>
-              <Link href="/verify/rmo-3b-andheri?room=r2" className="btn btn--ghost">
-                Open verification page
+              <Link href="/marketplace" className="btn btn--ghost">
+                Browse rooms
               </Link>
             </div>
           </div>
         </section>
-
-        <aside className="panel panel--pad">
-          <p className="eyebrow">QR + verification</p>
-          <p className="small" style={{ marginTop: 10, color: "rgba(22,35,59,.68)" }}>
-            Every room gets a public link and QR. The tenant page confirms the
-            holder against Hedera and can run a fresh presence check.
-          </p>
-          <p className="mono" style={{ marginTop: 14, fontSize: 10.5, wordBreak: "break-all" }}>
-            rentmeout.xyz/verify/rmo-3b-andheri?room=r2
-          </p>
-        </aside>
       </div>
     );
   }
@@ -249,25 +256,65 @@ export function ListingForm() {
           <section className="panel">
             <div className="panel__head">
               <h2>Property and period</h2>
-              <span className="badge badge--verified">
-                <span className="badge__check" aria-hidden="true">
-                  ✓
+              {application ? (
+                <span className="badge badge--verified">
+                  <span className="badge__check" aria-hidden="true">
+                    ✓
+                  </span>
+                  Approved
                 </span>
-                Approved
-              </span>
+              ) : (
+                <span className="badge badge--quiet">Not approved</span>
+              )}
             </div>
             <div className="panel__body">
+              {!application && (
+                <div className="notice notice--brass" style={{ marginBottom: 16 }}>
+                  <span className="notice__icon" aria-hidden="true">
+                    !
+                  </span>
+                  <div>
+                    <strong>
+                      {applicationsState === "loading"
+                        ? "Checking your approval…"
+                        : applicationsState === "unavailable"
+                          ? "Your applications could not be read from Arkiv."
+                          : !hasIdentity || applications.length === 0
+                            ? "This device has no property application."
+                            : applications.some((app) => app.status === "pending")
+                              ? "Your property is waiting for the registrar."
+                              : "Your application was not approved."}
+                    </strong>
+                    {applicationsState === "ready" && (
+                      <p>
+                        Rooms can be listed once the registrar approves a property.{" "}
+                        <Link href="/owner/new" className="text-link">
+                          Submit a property
+                        </Link>
+                      </p>
+                    )}
+                  </div>
+                </div>
+              )}
               <div className="form-grid">
                 <div className="field field--wide">
                   <label htmlFor="property">Approved property</label>
-                  <select id="property" defaultValue={property.id}>
-                    <option value={property.id}>
-                      {property.nickname} · {property.locality}
-                    </option>
+                  <select
+                    id="property"
+                    value={application?.applicationId ?? ""}
+                    disabled={!application}
+                    onChange={(event) => setApplicationId(event.target.value)}
+                  >
+                    {approved.length === 0 && <option value="">None yet</option>}
+                    {approved.map((app) => (
+                      <option key={app.applicationId} value={app.applicationId}>
+                        {app.nickname} · {app.locality}
+                      </option>
+                    ))}
                   </select>
                   <span className="field__hint">
-                    Unapproved properties cannot be selected. The contract also
-                    blocks them if the UI is bypassed.
+                    Only registrar-approved properties appear here. The contract also
+                    rejects a listing without a valid approval proof.
                   </span>
                 </div>
                 <div className="field">
@@ -290,21 +337,6 @@ export function ListingForm() {
                 </div>
               </div>
 
-              {overlap && (
-                <div className="notice notice--alert" style={{ marginTop: 16 }}>
-                  <span className="notice__icon" aria-hidden="true">
-                    !
-                  </span>
-                  <div>
-                    <strong>Rooms already listed for part of this period.</strong>
-                    <p>
-                      Room 2 is sold for Jan – Mar 2027 and the other rooms have
-                      an active listing. Pick a non-overlapping period, such as
-                      1 Apr – 30 Jun 2027.
-                    </p>
-                  </div>
-                </div>
-              )}
               {invalidDates && (
                 <div className="notice notice--alert" style={{ marginTop: 16 }}>
                   <span className="notice__icon" aria-hidden="true">
@@ -326,7 +358,10 @@ export function ListingForm() {
             </div>
             <div className="panel__body">
               <div className="stack-16">
-                {rooms.map((room, index) => (
+                {rooms.length === 0 && (
+                  <p className="small dim">Rooms appear once a property is approved.</p>
+                )}
+                {rooms.map((room) => (
                   <div
                     className="between wrap"
                     key={room.id}
@@ -338,7 +373,7 @@ export function ListingForm() {
                     <label className="choice">
                       <input
                         type="checkbox"
-                        checked={selected[room.id]}
+                        checked={Boolean(selected[room.id])}
                         onChange={(event) =>
                           setSelected({
                             ...selected,
@@ -346,7 +381,7 @@ export function ListingForm() {
                           })
                         }
                       />
-                      Room {index + 1} · {room.name.split("·")[1]?.trim()}
+                      {room.name}
                     </label>
                     <div className="field" style={{ width: 150 }}>
                       <label htmlFor={`price-${room.id}`}>Price · USDC</label>
@@ -354,7 +389,7 @@ export function ListingForm() {
                         id={`price-${room.id}`}
                         type="number"
                         min="1"
-                        value={prices[room.id]}
+                        value={prices[room.id] ?? ""}
                         onChange={(event) =>
                           setPrices({ ...prices, [room.id]: event.target.value })
                         }
@@ -370,7 +405,7 @@ export function ListingForm() {
           <section className="panel">
             <div className="panel__head">
               <h2>Confirm issuance</h2>
-              <span className="badge badge--quiet">Wallet prompt follows</span>
+              <span className="badge badge--quiet">One ATS token per room</span>
             </div>
             <div className="panel__body">
               {!connected ? (
@@ -380,7 +415,7 @@ export function ListingForm() {
                   </span>
                   <div style={{ flex: 1 }}>
                     <strong>Connect the owner wallet.</strong>
-                    <p>Only the verified owner wallet can issue these tokens.</p>
+                    <p>Sale payments go to this wallet.</p>
                     <button
                       type="button"
                       className="btn btn--small"
@@ -398,15 +433,12 @@ export function ListingForm() {
                   </span>
                   <div style={{ flex: 1 }}>
                     <strong>Verify the owner identity.</strong>
-                    <p>
-                      The owner wallet must be on the ATS allowlist before a mint
-                      can succeed.
-                    </p>
+                    <p>Verify a unique person with World ID before listing a room.</p>
                     <div style={{ marginTop: 12 }}>
                       <WorldIdButton
                         action="owner-verify"
                         label="Verify with World ID"
-                        onVerified={() => setVerified(true)}
+                        onVerified={setVerified}
                       />
                     </div>
                   </div>
@@ -417,10 +449,10 @@ export function ListingForm() {
                     ✓
                   </span>
                   <div>
-                    <strong>Owner verified and allowlisted.</strong>
+                    <strong>Owner verified.</strong>
                     <p>
-                      The issuer will mint one token per selected room and write
-                      the matching Arkiv listing after both confirm.
+                      Each selected room gets its own ATS token on Hedera, then a
+                      searchable listing on Arkiv.
                     </p>
                   </div>
                 </div>
@@ -457,17 +489,17 @@ export function ListingForm() {
                         ? "Connect a wallet to continue."
                         : !verified
                           ? "Verify your identity to issue tokens."
-                          : chosen.length === 0
-                            ? "Select at least one room."
-                            : overlap
-                              ? "Choose a non-overlapping period."
+                          : !application
+                            ? "A registrar-approved property is required."
+                            : chosen.length === 0
+                              ? "Select at least one room."
                               : "Complete the price and date fields."}
                     </p>
                   )}
                 </div>
                 <p className="form-actions__note">
-                  Confirmation is shown only after the mint and the index write
-                  both succeed. A pending transaction is never shown as complete.
+                  Each room is confirmed only after its Hedera transaction succeeds.
+                  Listing several rooms sends one transaction per room.
                 </p>
               </div>
             </div>
@@ -478,7 +510,7 @@ export function ListingForm() {
           <section className="panel panel--pad">
             <p className="eyebrow">Preview</p>
             <h2 className="subtitle" style={{ marginTop: 10 }}>
-              {property.nickname}
+              {application?.nickname ?? "No approved property"}
             </h2>
             <p className="small dim" style={{ marginTop: 4 }}>
               {dateLabel}
@@ -487,7 +519,7 @@ export function ListingForm() {
             <div className="buy-panel__list" style={{ marginTop: 16 }}>
               {chosen.map((room) => (
                 <div key={room.id}>
-                  <span>Room {rooms.findIndex((entry) => entry.id === room.id) + 1}</span>
+                  <span>{room.name}</span>
                   <span className="mono">
                     {formatUsdc(Number(prices[room.id] || 0))} USDC
                   </span>
@@ -510,25 +542,25 @@ export function ListingForm() {
           <section className="panel panel--pad">
             <p className="eyebrow">Contract checks</p>
             <div className="timeline" style={{ marginTop: 12 }}>
-              <div className="timeline__item" data-done="true">
+              <div className="timeline__item" data-done={Boolean(application)}>
                 <span className="timeline__dot" />
                 <div>
                   <strong>Property approved</strong>
                   <span>Registrar-approved commitment on Hedera</span>
                 </div>
               </div>
-              <div className="timeline__item" data-done={!overlap}>
+              <div className="timeline__item" data-done={verified}>
                 <span className="timeline__dot" />
                 <div>
-                  <strong>No overlap</strong>
-                  <span>Same room cannot have two active periods</span>
+                  <strong>Owner verified</strong>
+                  <span>One person, one wallet, via World ID</span>
                 </div>
               </div>
-              <div className="timeline__item" data-done={Boolean(ready)}>
+              <div className="timeline__item" data-done={!invalidDates}>
                 <span className="timeline__dot" />
                 <div>
-                  <strong>Owner allowlisted</strong>
-                  <span>ATS mint target must be eligible</span>
+                  <strong>Valid period</strong>
+                  <span>The end date must follow the start date</span>
                 </div>
               </div>
             </div>

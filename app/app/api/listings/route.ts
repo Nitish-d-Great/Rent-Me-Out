@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
-import { createWalletClient, http } from "viem";
+import { createWalletClient, http, parseEventLogs } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
-import { hederaTestnet, publicClient, registryAddress } from "@/lib/chain/registry";
+import { hederaTestnet, invalidateRooms, publicClient, registryAddress } from "@/lib/chain/registry";
+import { indexListing } from "@/lib/arkiv/listings";
 
 /**
  * Publishes a listing from a proof the owner generated on their own device.
@@ -31,6 +32,13 @@ const CREATE_LISTING_ABI = [
     ],
     outputs: [{ type: "uint256" }],
   },
+  {
+    type: "event", name: "RoomTokenIssued", anonymous: false,
+    inputs: [
+      { name: "listingId", type: "uint256", indexed: true },
+      { name: "token", type: "address", indexed: true },
+    ],
+  },
   { type: "error", name: "TermsNotBoundToProof", inputs: [] },
   { type: "error", name: "RoomAlreadyListed", inputs: [] },
   { type: "error", name: "InvalidPeriod", inputs: [] },
@@ -48,7 +56,10 @@ interface ProofBody {
 }
 
 export async function POST(request: Request) {
-  let body: { proof?: ProofBody; start?: number; end?: number; price?: string; payout?: string };
+  let body: {
+    proof?: ProofBody; start?: number; end?: number; price?: string; payout?: string;
+    city?: string; label?: string;
+  };
   try {
     body = await request.json();
   } catch {
@@ -95,8 +106,38 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "listing_reverted" }, { status: 502 });
     }
 
+    const [issued] = parseEventLogs({
+      abi: CREATE_LISTING_ABI, eventName: "RoomTokenIssued", logs: receipt.logs,
+    });
+    const listingId = issued?.args.listingId;
+    const token = issued?.args.token;
+
+    // The room now exists on Hedera whatever happens next, so a failed index write is
+    // reported as "not indexed" rather than as a failed listing.
+    let indexed = false;
+    if (listingId !== undefined && token) {
+      try {
+        await indexListing({
+          listingId,
+          city: (body.city ?? "").trim().slice(0, 60) || "Unspecified",
+          label: (body.label ?? "").trim().slice(0, 60) || `Room ${listingId}`,
+          priceUsdc: BigInt(price),
+          startsAt: start,
+          endsAt: end,
+          payout: payout as `0x${string}`,
+          token,
+          listingTx: hash,
+        });
+        indexed = true;
+      } catch (error) {
+        console.error("[listings] not indexed on Arkiv:", error);
+      }
+    }
+    invalidateRooms();
+
     return NextResponse.json({
-      ok: true, transactionHash: hash,
+      ok: true, transactionHash: hash, indexed,
+      listingId: listingId?.toString(), token,
       explorer: `https://hashscan.io/testnet/transaction/${hash}`,
     });
   } catch (error) {

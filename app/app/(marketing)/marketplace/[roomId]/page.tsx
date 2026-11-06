@@ -13,6 +13,7 @@ import {
   rooms,
   type Room,
 } from "@/lib/data";
+import { readRoomIndex } from "@/lib/arkiv/listings";
 import { readRoom } from "@/lib/chain/registry";
 import { recordToRoom, shortAddress } from "@/lib/chain/to-room";
 
@@ -25,7 +26,18 @@ async function loadRoom(roomId: string): Promise<{ room: Room | null; live: bool
   if (/^\d+$/.test(roomId)) {
     try {
       const record = await readRoom(BigInt(roomId));
-      if (record) return { room: recordToRoom(record), live: true };
+      if (record) {
+        const entry = (await readRoomIndex().catch(() => null))?.get(record.listingId);
+        return {
+          room: recordToRoom({
+            ...record,
+            city: entry?.city,
+            purchaseTx: entry?.purchaseTx,
+            arkivKey: entry?.rightsKey ?? entry?.listingKey,
+          }),
+          live: true,
+        };
+      }
     } catch {
       // Fall through to the sample set rather than showing an error page.
     }
@@ -72,7 +84,9 @@ export default async function RoomDetailPage({ params }: PageProps) {
 
           <div className="detail-copy" style={{ marginTop: 30 }}>
             <p className="eyebrow">
-              {property.nickname} · {property.locality}, {property.city}
+              {live
+                ? `Registrar-approved property · ${room.city ?? "City not indexed"}`
+                : `${property.nickname} · ${property.locality}, ${property.city}`}
             </p>
             <h1>{room.name}</h1>
             <p className="lede">{room.note}</p>

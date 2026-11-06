@@ -4,19 +4,37 @@ import Link from "next/link";
 import { useState } from "react";
 import { useWallet } from "@/components/providers";
 import { getOrCreateIdentity } from "@/lib/chain/owner-identity";
+import { useWalletVerified } from "@/lib/chain/use-owner";
 import { VerifyBadge } from "@/components/ui/verify-badge";
 import { WorldIdButton } from "@/components/ui/world-id-button";
 
 type SubmitState = "idle" | "submitting" | "submitted";
 
+function toBase64(file: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result).split(",")[1] ?? "");
+    reader.onerror = () => reject(new Error("deed_unreadable"));
+    reader.readAsDataURL(file);
+  });
+}
+
+/** A small placeholder, so the review flow can be tried without a real deed. */
+function sampleDeed(): Blob {
+  return new Blob(["%PDF-1.4\n% RentMeOut sample deed. Not a legal document.\n%%EOF\n"], {
+    type: "application/pdf",
+  });
+}
+
 export function PropertyForm() {
-  const { connected, connect } = useWallet();
-  const [verified, setVerified] = useState(false);
+  const { connected, connect, address } = useWallet();
+  const { verified, confirm: setVerified } = useWalletVerified(address);
   const [submit, setSubmit] = useState<SubmitState>("idle");
   const [error, setError] = useState<string | null>(null);
   const [reference, setReference] = useState<string | null>(null);
   const [commitment, setCommitment] = useState<string | null>(null);
   const [deed, setDeed] = useState<string>("");
+  const [deedFile, setDeedFile] = useState<Blob | null>(null);
   const [form, setForm] = useState({
     nickname: "Bandra studio",
     locality: "Bandra East",
@@ -50,6 +68,8 @@ export function PropertyForm() {
     setError(null);
     try {
       const identity = getOrCreateIdentity();
+      if (!deedFile) throw new Error("no_deed");
+      const deedBase64 = await toBase64(deedFile);
       const applicationId = `APP-${Date.now().toString(36).toUpperCase()}`;
       const res = await fetch("/api/properties", {
         method: "POST",
@@ -62,11 +82,17 @@ export function PropertyForm() {
           locality: form.locality.trim(),
           city: form.city.trim(),
           rooms: Number(form.rooms),
+          deedName: deed,
+          deedBase64,
         }),
       });
       const data = (await res.json()) as { ok?: boolean; error?: string };
       if (!res.ok || !data.ok) {
-        setError(data.error ?? "submit_failed");
+        setError(
+          data.error === "deed_too_large"
+            ? "That deed is larger than 3 MB."
+            : (data.error ?? "submit_failed"),
+        );
         setSubmit("idle");
         return;
       }
@@ -227,7 +253,7 @@ export function PropertyForm() {
                   <WorldIdButton
                     action="owner-verify"
                     label="Verify with World ID"
-                    onVerified={() => setVerified(true)}
+                    onVerified={setVerified}
                   />
                 </div>
               </div>
@@ -327,7 +353,7 @@ export function PropertyForm() {
         <div className="panel__body">
           <div className="dropzone">
             <strong>Upload the property deed as a PDF</strong>
-            <span>PDF only · up to 25 MB · encrypted before it leaves the server</span>
+            <span>PDF only · up to 3 MB · encrypted before it is stored on Swarm</span>
             <input
               type="file"
               accept="application/pdf"
@@ -335,6 +361,7 @@ export function PropertyForm() {
               onChange={(event) => {
                 const file = event.target.files?.[0];
                 setDeed(file ? file.name : "");
+                setDeedFile(file ?? null);
               }}
             />
             {deed && (
@@ -349,7 +376,10 @@ export function PropertyForm() {
               <button
                 type="button"
                 className="demo-chip"
-                onClick={() => setDeed("bandra-studio-deed.pdf")}
+                onClick={() => {
+                  setDeed("sample-deed.pdf");
+                  setDeedFile(sampleDeed());
+                }}
               >
                 Use sample deed for the demo
               </button>

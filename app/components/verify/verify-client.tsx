@@ -44,13 +44,15 @@ export function VerifyClient({
     setShareOrigin(window.location.origin);
   }, []);
 
+  const isLive = liveStatus === "live";
+  // Only the sample rooms may show the sample holder. A live room with no holder shows none.
   const holderShort = (r: { holder?: string }) =>
-    r.holder ? shortAddress(r.holder) : demo.brokerShort;
+    r.holder ? shortAddress(r.holder) : isLive ? "—" : demo.brokerShort;
 
 
-  const [roomId, setRoomId] = useState(
-    rooms.some((room) => room.id === initialRoom) ? initialRoom : "r2",
-  );
+  // Kept as given even before the live rooms load: the door QR names a specific room, and
+  // showing a tenant a different room's status would be worse than showing nothing.
+  const [roomId, setRoomId] = useState(initialRoom);
   const [stateByRoom, setStateByRoom] = useState<Record<string, RoomState>>({
     r1: "available",
     r2: initialState ?? "held",
@@ -120,10 +122,7 @@ export function VerifyClient({
       <main className="verify-page">
         <header className="verify-head">
           <p className="verify-head__eyebrow">Public check · no account needed</p>
-          <h1 className="verify-head__title">{property.nickname}</h1>
-          <p className="verify-head__sub">
-            {property.locality}, {property.city}
-          </p>
+          <h1 className="verify-head__title">Verify a room</h1>
         </header>
         <section className="verify-panel">
           <p className="dim">Reading rights from Hedera testnet…</p>
@@ -137,10 +136,12 @@ export function VerifyClient({
       <header className="verify-head">
         <p className="eyebrow">Public check · no account needed</p>
         <h1>
-          {property.nickname}
+          {isLive ? room.name : property.nickname}
           <br />
           <span style={{ color: "var(--graphite)" }}>
-            {property.locality}, {property.city}
+            {isLive
+              ? (room.city ?? "City not indexed")
+              : `${property.locality}, ${property.city}`}
           </span>
         </h1>
         <p>
@@ -153,7 +154,7 @@ export function VerifyClient({
       <section aria-labelledby="rooms-title" style={{ marginTop: 24 }}>
         <div className="between" style={{ marginBottom: 4 }}>
           <h2 id="rooms-title" className="subtitle">
-            Rooms in this flat
+            Rooms
           </h2>
           <span className="badge badge--verified">
             <span className="badge__check" aria-hidden="true">
@@ -196,7 +197,9 @@ export function VerifyClient({
                     {formatDate(entry.validUntil)} ·{" "}
                     {entryState === "held"
                       ? `holder ${holderShort(entry)}`
-                      : "one verified broker"}
+                      : isLive
+                        ? "no current holder"
+                        : "one verified broker"}
                   </p>
                 </span>
                 <span className="verify-room__state">
@@ -269,7 +272,17 @@ export function VerifyClient({
                 <div className="verify-check">
                   <span>Purchase transaction</span>
                   <span className="mono">
-                    {room.transactionId?.slice(0, 16)}…
+                    {room.transactionId ? (
+                      <a
+                        href={`https://hashscan.io/testnet/transaction/${room.transactionId}`}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        {room.transactionId.slice(0, 16)}…
+                      </a>
+                    ) : (
+                      "Not indexed yet"
+                    )}
                   </span>
                 </div>
               </div>
@@ -303,7 +316,7 @@ export function VerifyClient({
             <>
               <div className="verify-warning">
                 <strong>Expired — no current valid holder.</strong> The rights
-                period has ended and the token has been burned. Do not pay an
+                period has ended, so nobody holds this room. Do not pay an
                 advance on this listing.
               </div>
               <div className="verify-result__checks" style={{ marginTop: 16 }}>
@@ -340,7 +353,7 @@ export function VerifyClient({
                 </div>
                 <div className="verify-check">
                   <span>Property approval</span>
-                  <span>Registrar-approved · root v{demo.rootVersion}</span>
+                  <span>Registrar-approved · root v{rootVersion ?? demo.rootVersion}</span>
                 </div>
               </div>
             </>
@@ -460,8 +473,8 @@ export function VerifyClient({
                       through {formatDate(room.validUntil)}.
                     </p>
                     <div className="live-check__meta">
-                      <span className="mono">{demo.brokerShort}</span>
-                      <span className="mono">{demo.nullifierShort}</span>
+                      <span className="mono">{holderShort(room)}</span>
+                      <span className="mono">{room.holderNullifier ?? demo.nullifierShort}</span>
                       <span>checked {checkedAt}</span>
                     </div>
                     <button
@@ -578,7 +591,7 @@ export function VerifyClient({
           Browse other rooms
         </Link>
         <span className="mono dim" style={{ fontSize: 10 }}>
-          {demo.purchaseTx}
+          {isLive ? (room.arkivKey ? `Arkiv ${room.arkivKey.slice(0, 18)}…` : "") : demo.purchaseTx}
         </span>
       </div>
     </>

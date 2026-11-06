@@ -21,13 +21,20 @@ interface ApiRoom {
   end: string;
   price: string;
   roomTag: string;
+  token: string;
+  payout: string;
+  city?: string;
+  label?: string;
+  purchaseTx?: string;
+  arkivKey?: string;
 }
 
 function toRoom(r: ApiRoom, index: number): Room {
   return recordToRoom(r as unknown as RoomRecord, index);
 }
 
-export type LiveStatus = "loading" | "live" | "unavailable";
+/** "empty" means the registry answered and holds no listings, which is not an outage. */
+export type LiveStatus = "loading" | "live" | "empty" | "unavailable";
 
 export function useLiveRooms(): {
   rooms: Room[] | null;
@@ -42,14 +49,13 @@ export function useLiveRooms(): {
     let cancelled = false;
     void (async () => {
       try {
-        const res = await fetch("/api/rooms");
+        // A slow RPC must end in a visible "unavailable", not a page that loads forever.
+        const res = await fetch("/api/rooms", { signal: AbortSignal.timeout(45_000) });
         if (!res.ok) throw new Error(String(res.status));
         const data = (await res.json()) as { rooms: ApiRoom[]; rootVersion?: string };
         if (cancelled) return;
         if (!data.rooms?.length) {
-          // The chain is reachable but holds no listings yet. That is not an error,
-          // but it is also not something to present as live rights.
-          setStatus("unavailable");
+          setStatus("empty");
           return;
         }
         setRooms(data.rooms.map(toRoom));

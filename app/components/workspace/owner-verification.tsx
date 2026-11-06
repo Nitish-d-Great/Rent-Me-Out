@@ -1,13 +1,13 @@
 "use client";
 
-import { useState } from "react";
+import { useWalletVerified } from "@/lib/chain/use-owner";
 import { useWallet } from "@/components/providers";
 import { VerifyBadge } from "@/components/ui/verify-badge";
 import { WorldIdButton } from "@/components/ui/world-id-button";
 
 export function OwnerVerification() {
-  const { connected, connect } = useWallet();
-  const [verified, setVerified] = useState(false);
+  const { connected, connect, address } = useWallet();
+  const { verified, confirm: setVerified } = useWalletVerified(address);
 
   if (verified) {
     return (
@@ -49,7 +49,7 @@ export function OwnerVerification() {
             <WorldIdButton
               action="owner-verify"
               label="Verify with World ID"
-              onVerified={() => setVerified(true)}
+              onVerified={setVerified}
             />
           )}
           <span className="badge badge--quiet">Registrar review comes next</span>
