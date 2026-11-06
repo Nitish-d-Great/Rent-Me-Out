@@ -26,13 +26,22 @@ contract RentalRegistryTest is Test {
     address brokerB = makeAddr("brokerB");
     address stranger = makeAddr("stranger");
 
-    // Terms baked into fixtures/proof.json (see js/make-fixture.js).
-    uint64 constant START = 1767225600;
-    uint64 constant END = 1774915200;
-    uint256 constant PRICE = 1_200_000_000;
-    address constant PAYOUT = 0x000000000000000000000000000000000000dEaD;
+    // Terms are read from fixtures/proof.json in setUp, so they cannot drift from the proof
+    // they are bound to. Cycle 2 is the re-application after cycle 1's period ends.
+    uint64 START;
+    uint64 END;
+    uint256 PRICE;
+    address PAYOUT;
+    uint64 START2;
+    uint64 END2;
+    uint256 PRICE2;
 
     function setUp() public {
+        Fixture.Terms memory t = Fixture.terms();
+        (START, END, PRICE, PAYOUT) = (t.start, t.end, t.price, t.payout);
+        Fixture.Terms memory t2 = Fixture.cycle2Terms();
+        (START2, END2, PRICE2) = (t2.start, t2.end, t2.price);
+
         vm.warp(START - 10 days);
         semaphore = new Semaphore(ISemaphoreVerifier(address(new SemaphoreVerifier())));
         usdc = new MockUSDC();
@@ -58,6 +67,13 @@ contract RentalRegistryTest is Test {
 
     function _list() internal returns (uint256) {
         return reg.createListing(Fixture.proof(), START, END, PRICE, PAYOUT);
+    }
+
+    /// Owner re-applies and the registrar approves a fresh commitment, then lists again.
+    function _reapplyAndList() internal returns (uint256) {
+        vm.prank(registrar);
+        reg.approveProperty(bytes32(uint256(0xBEEF)), Fixture.cycle2Commitment());
+        return reg.createListing(Fixture.cycle2Proof(), START2, END2, PRICE2, PAYOUT);
     }
 
     // ------------------------------------------------------------ properties
@@ -108,20 +124,70 @@ contract RentalRegistryTest is Test {
     function test_ForgedProofRejected() public {
         ISemaphore.SemaphoreProof memory p = Fixture.proof();
         p.points[0] += 1;
-        vm.expectRevert(RentalRegistry.InvalidProof.selector);
+        vm.expectRevert(ISemaphore.Semaphore__InvalidProof.selector);
         reg.createListing(p, START, END, PRICE, PAYOUT);
     }
 
-    function test_OverlapRejectedThenRelistAfterCancel() public {
-        uint256 id = _list();
-        vm.expectRevert(abi.encodeWithSelector(RentalRegistry.RoomAlreadyListed.selector, id));
+    function test_ApprovalIsSingleUse() public {
         _list();
+        // same approval, same room: the nullifier is spent inside the Semaphore group
+        vm.expectRevert(ISemaphore.Semaphore__YouAreUsingTheSameNullifierTwice.selector);
+        _list();
+    }
 
-        vm.prank(PAYOUT); // owner cancels
+    function test_CancelDoesNotGiveBackTheApproval() public {
+        uint256 id = _list();
+        vm.prank(PAYOUT);
         reg.cancelListing(id);
         assertEq(uint256(reg.roomState(id)), uint256(RentalRegistry.RoomState.Cancelled));
         assertFalse(rights.exists(id));
-        assertEq(_list(), 2); // same room, same period, now allowed
+
+        // the owner must re-apply; the spent proof cannot be reused, by them or anyone else
+        vm.expectRevert(ISemaphore.Semaphore__YouAreUsingTheSameNullifierTwice.selector);
+        _list();
+        vm.prank(stranger);
+        vm.expectRevert(ISemaphore.Semaphore__YouAreUsingTheSameNullifierTwice.selector);
+        _list();
+    }
+
+    /// The headline flow: expire, re-apply, tokenise from scratch.
+    function test_ExpiryThenReapprovalMintsFreshToken() public {
+        uint256 id1 = _list();
+        vm.prank(brokerA);
+        reg.buyRoom(id1);
+
+        vm.warp(END);
+        reg.expire(id1);
+        assertEq(uint256(reg.roomState(id1)), uint256(RentalRegistry.RoomState.Expired));
+        assertFalse(rights.exists(id1), "old token burned");
+
+        uint256 id2 = _reapplyAndList();
+        assertEq(id2, 2, "a brand-new token id, minted from scratch");
+        assertTrue(rights.exists(id2));
+        assertEq(rights.ownerOf(id2), address(reg), "escrowed again");
+        assertEq(uint256(reg.roomState(id2)), uint256(RentalRegistry.RoomState.Available));
+
+        RentalRegistry.Listing memory l = reg.getListing(id2);
+        assertEq(l.price, PRICE2);
+        assertEq(l.start, START2);
+
+        // the new cycle is not linkable to the old one: a different room tag
+        assertTrue(l.roomTag != reg.getListing(id1).roomTag, "fresh identity, fresh tag");
+
+        // and the new listing sells normally
+        vm.warp(START2 - 1 days);
+        vm.prank(brokerA);
+        reg.buyRoom(id2);
+        assertEq(reg.holderOf(id2), brokerA);
+    }
+
+    function test_ReapprovalRequiresRegistrar() public {
+        _list();
+        vm.warp(END);
+        reg.expire(1);
+        // without the registrar approving the fresh commitment, the new proof has no valid root
+        vm.expectRevert(ISemaphore.Semaphore__MerkleTreeRootIsNotPartOfTheGroup.selector);
+        reg.createListing(Fixture.cycle2Proof(), START2, END2, PRICE2, PAYOUT);
     }
 
     function test_InvalidPeriodRejected() public {
@@ -298,9 +364,9 @@ contract RentalRegistryTest is Test {
     // ------------------------------------------------------------- identity
     function test_OneIdentityOneWallet() public {
         vm.startPrank(registrar);
-        vm.expectRevert(abi.encodeWithSelector(BrokerIdentityRegistry.IdentityAlreadyLinked.selector, brokerA));
+        vm.expectRevert(abi.encodeWithSelector(BrokerIdentityRegistry.IdentityAlreadyBound.selector, brokerA));
         ids.registerBroker(brokerB, 111);
-        vm.expectRevert(abi.encodeWithSelector(BrokerIdentityRegistry.WalletAlreadyVerified.selector, 111));
+        vm.expectRevert(abi.encodeWithSelector(BrokerIdentityRegistry.WalletAlreadyHasIdentity.selector, 111));
         ids.registerBroker(brokerA, 333);
         ids.removeBroker(brokerA);
         ids.registerBroker(brokerB, 111); // freed after removal

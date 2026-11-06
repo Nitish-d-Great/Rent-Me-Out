@@ -11,10 +11,19 @@ import {IBrokerIdentity} from "./interfaces/IBrokerIdentity.sol";
 ///
 /// Privacy model: the registrar approves an owner's opaque Semaphore identity commitment
 /// (never an address). The owner lists a room with a Semaphore proof that "some approved
-/// property authorises these exact terms". The proof's nullifier (scope = room index) is a
-/// stable private room tag: the same property+room always yields the same tag, so overlap
-/// checks work without revealing which property it is. `verifyProof` is used (not
-/// `validateProof`) so the nullifier is never consumed and a room can be relisted later.
+/// property authorises these exact terms".
+///
+/// One approval, one tokenisation. `validateProof` consumes the proof's nullifier inside the
+/// Semaphore group, so an approved commitment can list a given room exactly once, ever. When
+/// that period is cancelled or expires the token is burned and the approval is spent: to list
+/// the room again the owner must re-apply and have a FRESH commitment approved. Each cycle
+/// therefore mints a brand-new room token from scratch.
+///
+/// A side effect is unlinkability: the room tag (the nullifier, scope = room index) is derived
+/// from the identity secret, so a re-application produces a different tag and nobody can tell
+/// two cycles concern the same room. The cost is that the contract can no longer detect a
+/// double-booking across two approvals of the same room (the tags differ), so the registrar
+/// must not approve a fresh application for a room whose period is still live.
 contract RentalRegistry is Roles {
     // ---------------------------------------------------------------- types
     enum Status {
@@ -49,13 +58,13 @@ contract RentalRegistry is Roles {
     error InvalidPrice();
     error InvalidPayout();
     error TermsNotBoundToProof();
-    error InvalidProof();
     error RoomAlreadyListed(uint256 conflictingListingId);
     error NoSuchListing();
     error NotAvailable();
     error ListingEnded();
     error BrokerNotVerified();
     error PaymentFailed();
+    error UsdcHasNoCode();
     error NotListingOwnerOrRegistrar();
     error NotFrozen();
     error AlreadyFrozen();
@@ -74,7 +83,7 @@ contract RentalRegistry is Roles {
         uint64 start,
         uint64 end,
         uint256 price,
-        uint256 rootVersion
+        uint256 approvedRootUsed
     );
     event ListingCancelled(uint256 indexed listingId, address indexed by);
     event RoomPurchased(uint256 indexed listingId, address indexed broker, address indexed payout, uint256 price);
@@ -111,6 +120,9 @@ contract RentalRegistry is Roles {
     constructor(ISemaphore semaphore_, address usdc_, IBrokerIdentity identity_, address owner_, uint256 rootWindow)
         Roles(owner_)
     {
+        // A call to an address with no code succeeds with empty returndata, which _pullUsdc
+        // would read as a successful transfer - i.e. free rooms. Fail at deploy instead.
+        if (usdc_.code.length == 0) revert UsdcHasNoCode();
         semaphore = semaphore_;
         usdc = usdc_;
         identity = identity_;
@@ -159,8 +171,9 @@ contract RentalRegistry is Roles {
         return uint256(keccak256(abi.encodePacked(room, start, end, price, payout)));
     }
 
-    /// List one room for one period. Requires a proof of membership in the approved set.
-    /// The room token is minted into this contract's escrow until bought or cancelled.
+    /// List one room for one period. Requires a proof of membership in the approved set, which
+    /// is spent by this call: the same approval cannot list this room again. The room token is
+    /// minted into this contract's escrow until bought or cancelled.
     function createListing(
         ISemaphore.SemaphoreProof calldata proof,
         uint64 start,
@@ -172,9 +185,13 @@ contract RentalRegistry is Roles {
         if (price == 0) revert InvalidPrice();
         if (payout == address(0)) revert InvalidPayout();
         if (proof.message != listingMessage(proof.scope, start, end, price, payout)) revert TermsNotBoundToProof();
-        // Reverts inside Semaphore for unknown/expired roots; returns false for a bad proof.
-        if (!semaphore.verifyProof(groupId, proof)) revert InvalidProof();
+        // Reverts inside Semaphore for a bad proof, an unknown/expired root, or a nullifier
+        // already spent in this group (Semaphore__YouAreUsingTheSameNullifierTwice) - that
+        // last one is what makes an approval single-use and blocks proof replay.
+        semaphore.validateProof(groupId, proof);
 
+        // Belt and braces: validateProof already guarantees one listing per tag, so this loop
+        // can only ever see an empty array. It stays as a guard in case the proof call changes.
         uint256 tag = proof.nullifier;
         uint256[] storage ids = _roomListings[tag];
         for (uint256 i = 0; i < ids.length; i++) {
@@ -189,7 +206,7 @@ contract RentalRegistry is Roles {
         ids.push(listingId);
 
         rights.mint(address(this), listingId);
-        emit ListingCreated(listingId, tag, payout, start, end, price, rootVersion);
+        emit ListingCreated(listingId, tag, payout, start, end, price, proof.merkleTreeRoot);
     }
 
     /// Owner (payout wallet) or registrar cancels a listing that has not sold. Burns the token.

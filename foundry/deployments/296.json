@@ -2,5 +2,14 @@
   "PoseidonT3": "0xb17ef1a6006aC1B28C7c7F8B50C7616793C8285F",
   "Semaphore": "0xA2A9dB3eB2715d03071E70D8bb2987E1AC79676E",
   "SemaphoreVerifier": "0xab3a842180e0031B438c12a707934e0Bef49C480",
-  "chainId": 296
+  "chainId": 296,
+  "BrokerIdentityRegistry": "0xF3A8f444502A2B9Be6B9AdA344c9A1b07Db4B0dC",
+  "RentalRegistry": "0x7bd8aBCD48A7282868E88770089Fa5cF8A315EEa",
+  "RoomRights": "0x929f2547c0aa473Dcd22f4a7897C20782c1A1BC2",
+  "USDC": "0xa8C449bDB4958Cf63b4f5a8Dcf41b6E5a95bEd9e",
+  "approvedGroupId": 1,
+  "owner": "0xE47DBA74b5F91f216D9456d1d6698b6907c391dF",
+  "registrars": [
+    "0xE47DBA74b5F91f216D9456d1d6698b6907c391dF"
+  ]
 }
