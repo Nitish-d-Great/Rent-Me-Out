@@ -6,7 +6,8 @@ import { useWallet } from "@/components/providers";
 import { buyRoom, explainBuyError, type BuyStage } from "@/lib/chain/buy";
 import { VerifyBadge } from "@/components/ui/verify-badge";
 import { WorldIdButton } from "@/components/ui/world-id-button";
-import { demo, formatDate, formatUsdc, type Room } from "@/lib/data";
+import { demo, formatDate, formatUsdc, type Room, periodLabel } from "@/lib/data";
+import { shortAddress } from "@/lib/chain/to-room";
 
 type Step = "idle" | "processing" | "done";
 
@@ -85,7 +86,7 @@ export function BuyPanel({ room, live = false }: { room: Room; live?: boolean })
               ✓
             </span>
             <div>
-              <strong>Room 2 has one current holder.</strong>
+              <strong>{room.name} has one current holder.</strong>
               <p>
                 The token is held by a verified broker until{" "}
                 {formatDate(room.validUntil)}.
@@ -96,11 +97,11 @@ export function BuyPanel({ room, live = false }: { room: Room; live?: boolean })
           <div className="buy-panel__list" style={{ marginTop: 18 }}>
             <div>
               <span>Holder</span>
-              <span className="mono">{demo.brokerShort}</span>
+              <span className="mono">{room.holder ? shortAddress(room.holder) : "—"}</span>
             </div>
             <div>
               <span>Rights period</span>
-              <span>{demo.periodLabel}</span>
+              <span>{periodLabel(room)}</span>
             </div>
             <div>
               <span>Token</span>
@@ -141,15 +142,15 @@ export function BuyPanel({ room, live = false }: { room: Room; live?: boolean })
         <div className="buy-panel__list">
           <div>
             <span>Rights period</span>
-            <span>{demo.periodLabel}</span>
+            <span>{periodLabel(room)}</span>
           </div>
           <div>
             <span>Valid from</span>
-            <span>{formatDate(demo.periodStart)}</span>
+            <span>{formatDate(room.validFrom)}</span>
           </div>
           <div>
             <span>Valid until</span>
-            <span>{formatDate(demo.periodEnd)}</span>
+            <span>{formatDate(room.validUntil)}</span>
           </div>
           <div>
             <span>Property</span>

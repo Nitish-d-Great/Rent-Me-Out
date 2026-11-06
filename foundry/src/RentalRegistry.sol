@@ -292,14 +292,14 @@ contract RentalRegistry is Roles {
         Listing storage l = _get(listingId);
         if (l.status != Status.Available && l.status != Status.Sold) revert NotAvailable();
         if (isFrozen(listingId)) revert AlreadyFrozen();
-        tokenOf[listingId].setAddressFrozen(_custodian(listingId), true);
+        tokenOf[listingId].freezePartialTokens(_custodian(listingId), 1);
         emit RoomFrozen(listingId, msg.sender, reasonHash);
     }
 
     function unfreezeRoom(uint256 listingId, bytes32 reasonHash) external onlyRegistrar {
         _get(listingId);
         if (!isFrozen(listingId)) revert NotFrozen();
-        tokenOf[listingId].setAddressFrozen(_custodian(listingId), false);
+        tokenOf[listingId].unfreezePartialTokens(_custodian(listingId), 1);
         emit RoomUnfrozen(listingId, msg.sender, reasonHash);
     }
 
@@ -334,7 +334,7 @@ contract RentalRegistry is Roles {
     function _burnRoomToken(uint256 listingId) private {
         IATSToken token = tokenOf[listingId];
         address custodian = _custodian(listingId);
-        if (token.isFrozen(custodian)) token.setAddressFrozen(custodian, false);
+        if (token.isFrozen(custodian)) token.unfreezePartialTokens(custodian, 1);
         // A holder can redeem their own ATS token, and that must not block expiry.
         if (token.balanceOf(custodian) != 0) token.burn(custodian, 1);
     }
@@ -406,9 +406,11 @@ contract RentalRegistry is Roles {
     /// Current holder, or address(0) if unsold / cancelled / expired.
     function holderOf(uint256 listingId) public view returns (address) {
         if (_get(listingId).status != Status.Sold) return address(0);
-        // The token decides: a broker who redeemed it no longer holds the room.
+        // The token decides: a broker who redeemed it no longer holds the room. A frozen
+        // token has left the spendable balance, but its holder still holds the room.
         address buyer = _buyer[listingId];
-        return tokenOf[listingId].balanceOf(buyer) != 0 ? buyer : address(0);
+        IATSToken token = tokenOf[listingId];
+        return token.balanceOf(buyer) != 0 || token.isFrozen(buyer) ? buyer : address(0);
     }
 
     /// World ID nullifier hash of the current holder (0 if there is no holder). The tenant

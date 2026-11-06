@@ -86,7 +86,11 @@ interface IATSToken {
     function forcedTransfer(address from, address to, uint256 amount) external returns (bool);
     function addToControlList(address account) external returns (bool);
     function removeFromControlList(address account) external returns (bool);
-    function setAddressFrozen(address account, bool frozen) external;
+    /// Locks the tokens: they leave the spendable balance and isFrozen becomes true.
+    /// Do not use setAddressFrozen for this. It only edits the allowlist, and isFrozen
+    /// never reports it.
+    function freezePartialTokens(address account, uint256 amount) external;
+    function unfreezePartialTokens(address account, uint256 amount) external;
     function isFrozen(address account) external view returns (bool);
     function balanceOf(address account) external view returns (uint256);
 }

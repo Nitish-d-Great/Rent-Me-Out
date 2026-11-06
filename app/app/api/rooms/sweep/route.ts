@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { expireListings } from "@/lib/chain/registry-write";
-import { readAllRooms } from "@/lib/chain/registry";
+import { hasLiveToken, readAllRooms } from "@/lib/chain/registry";
 
 /**
  * Expires every listing whose period has ended.
@@ -16,14 +16,15 @@ export async function POST() {
     const rooms = await readAllRooms();
     const now = Date.now();
 
-    // Only Available or Sold listings can expire; the registry reports both as a
-    // state that is not already expired or cancelled.
-    const due = rooms.filter(
-      (room) =>
-        new Date(room.end).getTime() <= now &&
-        room.state !== "expired" &&
-        room.state !== "cancelled",
+    // room.state cannot be used here: it reads "expired" as soon as the period ends,
+    // whether or not the token has been burned, which would make every room look done.
+    const ended = rooms.filter(
+      (room) => new Date(room.end).getTime() <= now && room.state !== "cancelled",
     );
+    const live = await Promise.all(
+      ended.map((room) => hasLiveToken(BigInt(room.listingId))),
+    );
+    const due = ended.filter((_, index) => live[index]);
 
     if (due.length === 0) {
       return NextResponse.json({ ok: true, expired: [], note: "nothing due" });
