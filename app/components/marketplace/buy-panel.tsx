@@ -3,24 +3,71 @@
 import Link from "next/link";
 import { useState } from "react";
 import { useWallet } from "@/components/providers";
+import { buyRoom, explainBuyError, type BuyStage } from "@/lib/chain/buy";
 import { VerifyBadge } from "@/components/ui/verify-badge";
 import { WorldIdButton } from "@/components/ui/world-id-button";
 import { demo, formatDate, formatUsdc, type Room } from "@/lib/data";
 
 type Step = "idle" | "processing" | "done";
 
-export function BuyPanel({ room }: { room: Room }) {
-  const { connected, connect } = useWallet();
+export function BuyPanel({ room, live = false }: { room: Room; live?: boolean }) {
+  const { connected, connect, address } = useWallet();
   const [verified, setVerified] = useState(false);
   const [step, setStep] = useState<Step>("idle");
   const [error, setError] = useState<string | null>(null);
+  const [stage, setStage] = useState<BuyStage | null>(null);
+  const [txHash, setTxHash] = useState<string | null>(null);
 
   const held = room.state !== "available";
 
-  const buy = () => {
+  /**
+   * The real purchase: the broker signs from their own wallet, so the registrar key
+   * can never buy on their behalf. Tops up from the testnet faucet if they are short,
+   * approves the registry, then calls buyRoom -- each step waited on before the next.
+   */
+  const buy = async () => {
+    if (!address) {
+      setError("Connect a wallet first.");
+      return;
+    }
+    const usdc = process.env.NEXT_PUBLIC_DEMO_USDC_ADDRESS;
+    const registry = process.env.NEXT_PUBLIC_RENTAL_REGISTRY_ADDRESS;
+    if (!usdc || !registry) {
+      setError("Contract addresses are not configured.");
+      return;
+    }
+
     setError(null);
+    setTxHash(null);
     setStep("processing");
-    window.setTimeout(() => setStep("done"), 1700);
+    try {
+      const hash = await buyRoom({
+        listingId: BigInt(room.id),
+        broker: address as `0x${string}`,
+        usdc: usdc as `0x${string}`,
+        registry: registry as `0x${string}`,
+        onProgress: (p) => {
+          setStage(p.stage);
+          if (p.hash) setTxHash(p.hash);
+        },
+      });
+      setTxHash(hash);
+      setStep("done");
+    } catch (err) {
+      setError(explainBuyError(err));
+      setStep("idle");
+    } finally {
+      setStage(null);
+    }
+  };
+
+  const stageLabel: Record<BuyStage, string> = {
+    checking: "Checking the listing…",
+    funding: "Minting test USDC…",
+    approving: "Approving USDC — confirm in your wallet…",
+    buying: "Confirm the purchase in your wallet…",
+    confirming: "Waiting for Hedera to confirm…",
+    done: "Done",
   };
 
   if (held) {
@@ -121,9 +168,17 @@ export function BuyPanel({ room }: { room: Room }) {
                 Payment received and the room token is now held by your wallet.
                 Rights are valid until {formatDate(room.validUntil)}.
               </p>
-              <p className="mono" style={{ marginTop: 8, wordBreak: "break-all" }}>
-                {demo.purchaseTx}
-              </p>
+              {txHash && (
+                <a
+                  href={`https://hashscan.io/testnet/transaction/${txHash}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="mono"
+                  style={{ marginTop: 8, wordBreak: "break-all", display: "block" }}
+                >
+                  {txHash}
+                </a>
+              )}
               <Link
                 href={`/broker/rights`}
                 className="text-link"
@@ -165,18 +220,25 @@ export function BuyPanel({ room }: { room: Room }) {
               </>
             )}
 
-            {connected && verified && (
+            {connected && verified && !live && (
+              <p className="buy-panel__note" style={{ color: "crimson" }}>
+                This is a sample room with no on-chain listing behind it, so it
+                cannot be bought. Open a room from the live registry instead.
+              </p>
+            )}
+
+            {connected && verified && live && (
               <>
                 <VerifyBadge label="Verified broker" />
                 <button
                   type="button"
                   className="btn btn--brass btn--wide"
                   style={{ marginTop: 12 }}
-                  onClick={buy}
+                  onClick={() => void buy()}
                   disabled={step === "processing"}
                 >
                   {step === "processing"
-                    ? "Confirming payment and token…"
+                    ? (stage ? stageLabel[stage] : "Confirming payment and token…")
                     : `Buy ${room.name.split("·")[0].trim()} · ${formatUsdc(room.price)} USDC`}
                 </button>
                 {step === "processing" && (

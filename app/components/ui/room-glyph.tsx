@@ -5,6 +5,8 @@ const stateFill: Record<RoomState, string> = {
   held: "rgba(240, 185, 138, 0.9)",
   frozen: "rgba(212, 70, 90, 0.16)",
   expired: "rgba(123, 135, 148, 0.08)",
+  // Burned token, same as expired.
+  cancelled: "rgba(123, 135, 148, 0.08)",
 };
 
 const roomTints = [
