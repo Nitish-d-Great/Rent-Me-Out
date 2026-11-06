@@ -1,7 +1,8 @@
 import Link from "next/link";
-import { demo } from "@/lib/data";
 
 export function SiteFooter() {
+  const registry = process.env.NEXT_PUBLIC_RENTAL_REGISTRY_ADDRESS;
+
   return (
     <footer className="site-footer">
       <div className="shell">
@@ -27,37 +28,27 @@ export function SiteFooter() {
 
           <div className="footer-col">
             <h3>Verify</h3>
-            <Link href="/verify/rmo-3b-andheri?room=r2">Room 2 · Ashoka Residency</Link>
-            <Link href="/verify/rmo-3b-andheri?room=r2&state=frozen">
-              Frozen state example
-            </Link>
-            <Link href="/verify/rmo-3b-andheri?room=r1">Available room example</Link>
+            <Link href="/verify/rmo-3b-andheri">Verify a room</Link>
             <span className="mono">World ID · session proof</span>
           </div>
 
           <div className="footer-col">
             <h3>On-chain / index</h3>
-            <a
-              href={`https://hashscan.io/testnet/transaction/${demo.purchaseTx}`}
-              target="_blank"
-              rel="noreferrer"
-            >
-              HashScan · sample purchase
-            </a>
-            <a
-              href={`https://hashscan.io/testnet/token/${roomsToken()}`}
-              target="_blank"
-              rel="noreferrer"
-            >
-              HashScan · room 2 token
-            </a>
-            <span className="mono">arkiv:0x4d2a…8f10 · root v12</span>
-            <span className="mono">wallet: 0x9f21…7c04</span>
+            {registry && (
+              <a
+                href={`https://hashscan.io/testnet/contract/${registry}`}
+                target="_blank"
+                rel="noreferrer"
+              >
+                HashScan · RentalRegistry
+              </a>
+            )}
+            <span className="mono">Hedera testnet · Arkiv Rabdi</span>
           </div>
         </div>
 
         <div className="footer-bottom">
-          <span>ETHGlobal Mumbai 2026 · testnet demo · sample data</span>
+          <span>ETHGlobal Mumbai 2026 · testnet demo</span>
           <span>
             Rent Me Out verifies recorded rental rights and identity match. It
             is not a title guarantee.
@@ -66,8 +57,4 @@ export function SiteFooter() {
       </div>
     </footer>
   );
-}
-
-function roomsToken() {
-  return "0.0.5941281";
 }

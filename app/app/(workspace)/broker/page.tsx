@@ -31,7 +31,7 @@ export default function BrokerPage() {
             Browse rooms
           </Link>
           <Link
-            href={`/verify/${demo.propertyId}?room=r2`}
+            href={`/verify/${demo.propertyId}`}
             className="btn btn--small btn--ghost"
           >
             Public verify page

@@ -99,7 +99,7 @@ export default function HomePage() {
                 List a property
               </Link>
               <Link
-                href="/verify/rmo-3b-andheri?room=r2"
+                href="/verify/rmo-3b-andheri"
                 className="btn btn--ghost"
               >
                 Verify a room
@@ -324,7 +324,7 @@ export default function HomePage() {
               List a property
             </Link>
             <Link
-              href="/verify/rmo-3b-andheri?room=r2"
+              href="/verify/rmo-3b-andheri"
               className="btn btn--ghost"
             >
               Verify a room

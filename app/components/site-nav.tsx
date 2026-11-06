@@ -9,7 +9,7 @@ const links = [
   { href: "/marketplace", label: "Browse rooms" },
   { href: "/owner", label: "Owner" },
   { href: "/broker", label: "Broker" },
-  { href: "/verify/rmo-3b-andheri?room=r2", label: "Verify a room" },
+  { href: "/verify/rmo-3b-andheri", label: "Verify a room" },
 ];
 
 export function SiteNav() {
