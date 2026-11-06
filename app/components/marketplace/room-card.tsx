@@ -10,6 +10,7 @@ export interface RoomCardData extends Room {
   city: string;
   periodLabel: string;
   propertyApproved?: boolean;
+  arkivRecord?: boolean;
 }
 
 export function RoomCard({ room, index }: { room: RoomCardData; index: number }) {
@@ -47,16 +48,18 @@ export function RoomCard({ room, index }: { room: RoomCardData; index: number })
           <span>
             {room.state === "held"
               ? `Holder ${room.holder?.slice(0, 6)}…${room.holder?.slice(-4)}`
-              : "One verified broker"}
+              : room.arkivRecord
+                ? "Hedera rights check required"
+                : "One verified broker"}
           </span>
         </div>
 
         <div className="room-card__foot">
-          <span className="badge badge--verified">
-            <span className="badge__check" aria-hidden="true">
-              ✓
-            </span>
-            Registrar-approved
+          <span className={`badge ${room.propertyApproved ? "badge--verified" : "badge--quiet"}`}>
+            {room.propertyApproved && (
+              <span className="badge__check" aria-hidden="true">✓</span>
+            )}
+            {room.arkivRecord ? "Arkiv record · verify on Hedera" : "Registrar-approved"}
           </span>
           <Link href={`/marketplace/${room.id}`} className="text-link">
             View room

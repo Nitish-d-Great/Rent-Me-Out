@@ -8,10 +8,12 @@
     "start": "next start",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
+    "test:swarm": "node --experimental-strip-types scripts/swarm-upload.test.mjs",
     "verify:e2e": "node scripts/verify-e2e.mjs",
     "registry": "node scripts/registry-admin.mjs"
   },
   "dependencies": {
+    "@arkiv-network/sdk": "^1.0.0",
     "@gsap/react": "^2.1.2",
     "@react-three/drei": "^10.7.9",
     "@react-three/fiber": "^9.8.2",

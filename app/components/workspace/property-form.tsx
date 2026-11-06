@@ -3,9 +3,18 @@
 import Link from "next/link";
 import { useState } from "react";
 import { useWallet } from "@/components/providers";
-import { getOrCreateIdentity } from "@/lib/chain/owner-identity";
 import { VerifyBadge } from "@/components/ui/verify-badge";
 import { WorldIdButton } from "@/components/ui/world-id-button";
+import {
+  downloadDeedKeyFile,
+  encryptAndUploadDeed,
+  type DeedKeyFile,
+} from "@/lib/swarm-upload";
+import { connectArkivWallet } from "@/lib/arkiv";
+import {
+  createPropertyApplication,
+  fetchApplicationReview,
+} from "@/lib/property-applications";
 
 type SubmitState = "idle" | "submitting" | "submitted";
 
@@ -13,17 +22,25 @@ export function PropertyForm() {
   const { connected, connect } = useWallet();
   const [verified, setVerified] = useState(false);
   const [submit, setSubmit] = useState<SubmitState>("idle");
-  const [error, setError] = useState<string | null>(null);
-  const [reference, setReference] = useState<string | null>(null);
-  const [commitment, setCommitment] = useState<string | null>(null);
-  const [deed, setDeed] = useState<string>("");
+  const [deed, setDeed] = useState<File | null>(null);
+  const [uploadError, setUploadError] = useState("");
+  const [reviewStatus, setReviewStatus] = useState<{
+    status: "approved" | "rejected";
+    reason: string;
+    reviewedAt: number;
+  } | null>(null);
+  const [checkingReview, setCheckingReview] = useState(false);
+  const [uploadReceipt, setUploadReceipt] = useState<{
+    reference: string;
+    keyFile: DeedKeyFile;
+    applicationKey: string;
+    txHash: string;
+  } | null>(null);
   const [form, setForm] = useState({
     nickname: "Bandra studio",
     locality: "Bandra East",
     city: "Mumbai",
     rooms: "2",
-    details:
-      "A compact two-room flat with a separate entry. One room is reserved for family use.",
     privacy: false,
   });
 
@@ -36,45 +53,54 @@ export function PropertyForm() {
     form.privacy;
   const canSubmit = connected && verified && Boolean(required);
 
-  /**
-   * Submits the application together with this device's Semaphore commitment.
-   *
-   * The identity secret is created here and stays in the browser: the registrar
-   * approves a commitment, never the secret, which is what lets a later listing proof
-   * stay unlinkable to this property.
-   */
+  const refreshReview = async () => {
+    if (!uploadReceipt) return;
+    setCheckingReview(true);
+    setUploadError("");
+    try {
+      setReviewStatus(await fetchApplicationReview(uploadReceipt.applicationKey));
+    } catch (error) {
+      setUploadError(
+        error instanceof Error ? error.message : "Could not check the Arkiv review status.",
+      );
+    } finally {
+      setCheckingReview(false);
+    }
+  };
+
   const submitForm = async (event: React.FormEvent) => {
     event.preventDefault();
-    if (!canSubmit) return;
+    if (!canSubmit || !deed) return;
+    setUploadError("");
     setSubmit("submitting");
-    setError(null);
+    let recoveryKeyFile: DeedKeyFile | null = null;
     try {
-      const identity = getOrCreateIdentity();
-      const applicationId = `APP-${Date.now().toString(36).toUpperCase()}`;
-      const res = await fetch("/api/properties", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          action: "apply",
-          applicationId,
-          commitment: identity.commitment,
-          nickname: form.nickname.trim(),
-          locality: form.locality.trim(),
-          city: form.city.trim(),
-          rooms: Number(form.rooms),
-        }),
+      const { account, walletClient } = await connectArkivWallet();
+      const receipt = await encryptAndUploadDeed(deed);
+      recoveryKeyFile = receipt.keyFile;
+      const application = await createPropertyApplication(walletClient, {
+        owner: account,
+        propertyName: form.nickname.trim(),
+        locality: form.locality.trim(),
+        city: form.city.trim(),
+        roomCount: Number(form.rooms),
       });
-      const data = (await res.json()) as { ok?: boolean; error?: string };
-      if (!res.ok || !data.ok) {
-        setError(data.error ?? "submit_failed");
-        setSubmit("idle");
-        return;
-      }
-      setReference(applicationId);
-      setCommitment(identity.commitment);
+      const keyFile = { ...receipt.keyFile, applicationKey: application.entityKey };
+      downloadDeedKeyFile(keyFile);
+      setUploadReceipt({
+        ...receipt,
+        keyFile,
+        applicationKey: application.entityKey,
+        txHash: application.txHash,
+      });
       setSubmit("submitted");
-    } catch {
-      setError("network_error");
+    } catch (error) {
+      if (recoveryKeyFile) downloadDeedKeyFile(recoveryKeyFile);
+      setUploadError(
+        recoveryKeyFile
+          ? `The deed uploaded, but its Arkiv application was not created. A recovery key file was downloaded; keep it and check the transaction before retrying. ${error instanceof Error ? error.message : "Arkiv write failed."}`
+          : error instanceof Error ? error.message : "The encrypted deed upload failed.",
+      );
       setSubmit("idle");
     }
   };
@@ -83,46 +109,34 @@ export function PropertyForm() {
     return (
       <div className="panel" style={{ marginTop: 28 }}>
         <div className="panel__head">
-          <h2>Application received</h2>
-          <span className="badge badge--brass">Pending registrar review</span>
+          <h2>Property submitted</h2>
+          <span className="badge badge--verified">Arkiv · pending review</span>
         </div>
         <div className="panel__body">
-          {reference && (
-            <p className="micro" style={{ marginBottom: 12 }}>
-              Reference <span className="mono">{reference}</span>
-              {commitment && (
-                <>
-                  {" · "}identity commitment{" "}
-                  <span className="mono">{commitment.slice(0, 16)}…</span>
-                  {" — "}the secret behind it stays on this device.
-                </>
-              )}
-            </p>
-          )}
           <div className="notice notice--verified">
             <span className="notice__icon" aria-hidden="true">
               ✓
             </span>
             <div>
               <strong>
-                {form.nickname} is in the encrypted review queue.
+                {form.nickname} was submitted for registrar review.
               </strong>
               <p>
-                The deed was encrypted before upload. The registrar can open it
-                through an audited route; no public index record contains the
-                document or a cleartext storage pointer.
+                Arkiv stores only public-safe application fields. The deed
+                reference and key stay in the downloaded key file. Share it
+                with the assigned registrar only through a secure channel.
               </p>
             </div>
           </div>
 
           <div className="detail-meta" style={{ marginTop: 22 }}>
             <div>
-              <span className="micro">Application</span>
-              <strong className="mono">APP-1046</strong>
+              <span className="micro">Arkiv application</span>
+              <strong className="mono">{uploadReceipt?.applicationKey.slice(0, 14)}…</strong>
             </div>
             <div>
               <span className="micro">Status</span>
-              <strong>Pending review</strong>
+              <strong>{reviewStatus?.status ?? "Pending review"}</strong>
             </div>
             <div>
               <span className="micro">Rooms requested</span>
@@ -130,42 +144,84 @@ export function PropertyForm() {
             </div>
             <div>
               <span className="micro">Deed</span>
-              <strong className="mono">{deed}</strong>
+              <strong className="mono">{deed?.name}</strong>
             </div>
           </div>
+
+          {reviewStatus && (
+            <div className={`notice ${reviewStatus.status === "approved" ? "notice--verified" : "notice--alert"}`} style={{ marginTop: 18 }}>
+              <div>
+                <strong>Registrar {reviewStatus.status}</strong>
+                <p>{reviewStatus.reason || "No additional review note."}</p>
+                <p className="micro">Reviewed {new Date(reviewStatus.reviewedAt * 1000).toLocaleString()}</p>
+              </div>
+            </div>
+          )}
 
           <div className="timeline" style={{ marginTop: 24 }}>
             <div className="timeline__item" data-done="true">
               <span className="timeline__dot" />
               <div>
                 <strong>World ID validated</strong>
-                <span>Nullifier bound to wallet</span>
+                <span>World ID check completed in this session</span>
               </div>
             </div>
             <div className="timeline__item" data-done="true">
               <span className="timeline__dot" />
               <div>
                 <strong>Deed encrypted and uploaded</strong>
-                <span>Swarm · registrar-only decrypt</span>
+                <span>Swarm · client encrypted</span>
               </div>
             </div>
             <div className="timeline__item">
               <span className="timeline__dot" />
               <div>
-                <strong>Registrar decides</strong>
-                <span>Approve on Hedera or reject with a reason</span>
+                <strong>Registrar review</strong>
+                <span>Share the key file securely with the registrar</span>
               </div>
             </div>
             <div className="timeline__item">
               <span className="timeline__dot" />
               <div>
-                <strong>Listing opens</strong>
-                <span>One room token per room, when you choose</span>
+                <strong>Property listing</strong>
+                <span>Submit a listing separately through the Arkiv flow</span>
               </div>
             </div>
           </div>
 
+          {uploadReceipt && (
+            <div className="notice notice--brass" style={{ marginTop: 18 }}>
+              <div>
+                <strong>Key file downloaded · keep it private</strong>
+                <p>
+                  This file is needed to decrypt the deed. Anyone with the file
+                  and Swarm reference can decrypt it.
+                </p>
+                <p className="mono" style={{ marginTop: 8, overflowWrap: "anywhere" }}>
+                  Arkiv application: {uploadReceipt.applicationKey}
+                </p>
+                <p className="mono" style={{ marginTop: 8, overflowWrap: "anywhere" }}>
+                  Arkiv transaction: {uploadReceipt.txHash}
+                </p>
+                <p className="mono" style={{ marginTop: 8, overflowWrap: "anywhere" }}>
+                  Swarm reference: {uploadReceipt.reference}
+                </p>
+                <button
+                  type="button"
+                  className="btn btn--small"
+                  style={{ marginTop: 12 }}
+                  onClick={() => downloadDeedKeyFile(uploadReceipt.keyFile)}
+                >
+                  Download deed key file
+                </button>
+              </div>
+            </div>
+          )}
+
           <div className="form-actions">
+            <button type="button" className="btn btn--ghost" onClick={() => void refreshReview()} disabled={checkingReview}>
+              {checkingReview ? "Checking Arkiv…" : "Refresh review status"}
+            </button>
             <Link href="/owner" className="btn">
               Back to dashboard
             </Link>
@@ -196,10 +252,10 @@ export function PropertyForm() {
                 1
               </span>
               <div style={{ flex: 1 }}>
-                <strong>Connect a Hedera-compatible wallet.</strong>
+                <strong>Connect the wallet that will submit the application.</strong>
                 <p>
-                  The property application is bound to this wallet. The same
-                  identity cannot submit from a second wallet.
+                  The application is written to Arkiv Rabdi and owned by this
+                  wallet. A Rabdi network switch may be requested at submit.
                 </p>
                 <button
                   type="button"
@@ -252,7 +308,7 @@ export function PropertyForm() {
       <section className="panel" style={{ marginTop: 16 }}>
         <div className="panel__head">
           <h2>Step 2 · Property details</h2>
-          <span className="badge badge--quiet">Private until approved</span>
+          <span className="badge badge--quiet">Some fields are public on Arkiv</span>
         </div>
         <div className="panel__body">
           <div className="form-grid">
@@ -304,17 +360,6 @@ export function PropertyForm() {
                 }
               />
             </div>
-            <div className="field field--wide">
-              <label htmlFor="details">Short property description</label>
-              <textarea
-                id="details"
-                value={form.details}
-                onChange={(event) =>
-                  setForm({ ...form, details: event.target.value })
-                }
-                placeholder="Room layout, entry, shared spaces, anything the registrar should know."
-              />
-            </div>
           </div>
         </div>
       </section>
@@ -327,14 +372,14 @@ export function PropertyForm() {
         <div className="panel__body">
           <div className="dropzone">
             <strong>Upload the property deed as a PDF</strong>
-            <span>PDF only · up to 25 MB · encrypted before it leaves the server</span>
+              <span>PDF only · up to 25 MB · encrypted in this browser before upload</span>
             <input
               type="file"
               accept="application/pdf"
               aria-label="Deed PDF"
               onChange={(event) => {
                 const file = event.target.files?.[0];
-                setDeed(file ? file.name : "");
+                setDeed(file ?? null);
               }}
             />
             {deed && (
@@ -342,17 +387,8 @@ export function PropertyForm() {
                 <span className="badge__check" aria-hidden="true">
                   ✓
                 </span>
-                {deed}
+                {deed.name}
               </span>
-            )}
-            {!deed && (
-              <button
-                type="button"
-                className="demo-chip"
-                onClick={() => setDeed("bandra-studio-deed.pdf")}
-              >
-                Use sample deed for the demo
-              </button>
             )}
           </div>
 
@@ -361,14 +397,24 @@ export function PropertyForm() {
               i
             </span>
             <div>
-              <strong>The deed is never public.</strong>
+                <strong>Only encrypted bytes are uploaded.</strong>
               <p>
-                It is encrypted, stored privately, and visible only to the
-                registrar through an authorised, audited review route. The public
-                index sees an opaque application ID only.
+                Encryption happens locally in this browser. Arkiv stores the
+                public-safe property fields. The Swarm reference and key stay
+                in the downloaded key file. Do not include an exact address;
+                the key file cannot be recovered if lost.
               </p>
             </div>
           </div>
+
+          {uploadError && (
+            <div className="notice notice--brass" role="alert" style={{ marginTop: 16 }}>
+              <div>
+                <strong>Upload failed</strong>
+                <p>{uploadError}</p>
+              </div>
+            </div>
+          )}
 
           <label className="choice" style={{ marginTop: 16 }}>
             <input
@@ -386,15 +432,10 @@ export function PropertyForm() {
 
       <section className="panel" style={{ marginTop: 16 }}>
         <div className="panel__head">
-          <h2>Step 4 · Submit for review</h2>
-          <span className="badge badge--quiet">Registrar reviews the deed</span>
+          <h2>Step 4 · Encrypt and upload</h2>
+          <span className="badge badge--quiet">Arkiv · Rabdi</span>
         </div>
         <div className="panel__body">
-          {error && (
-            <p className="micro" style={{ color: "crimson", marginBottom: 10 }}>
-              ● The application was not submitted ({error}). Nothing was recorded.
-            </p>
-          )}
           <div className="form-actions" style={{ marginTop: 0, paddingTop: 0, borderTop: 0 }}>
             <div>
               <button
@@ -404,7 +445,7 @@ export function PropertyForm() {
               >
                 {submit === "submitting"
                   ? "Encrypting and uploading…"
-                  : "Submit property for review"}
+                  : "Encrypt and upload deed"}
               </button>
               {!canSubmit && (
                 <p className="form-lock" style={{ marginTop: 10 }}>
@@ -422,9 +463,9 @@ export function PropertyForm() {
               )}
             </div>
             <p className="form-actions__note">
-              On submit, the backend normalises the property, creates a random
-              salt and commitment, encrypts the deed, and writes only an opaque
-              pending application to Arkiv.
+              This uploads the encrypted deed to Swarm and writes a public-safe
+              application record to Arkiv. Keep the key file and share it with
+              the registrar securely.
             </p>
           </div>
         </div>

@@ -40,6 +40,12 @@ export interface Property {
   description: string;
 }
 
+// Set NEXT_PUBLIC_SITE_URL in the deployment environment for deep links/QRs.
+export const siteUrl =
+  process.env.NEXT_PUBLIC_SITE_URL?.replace(/\/$/, "") ??
+  "https://rentmeout.xyz";
+export const siteHost = siteUrl.replace(/^https?:\/\//, "");
+
 export const demo = {
   propertyId: "rmo-3b-andheri",
   propertyName: "Ashoka Residency",

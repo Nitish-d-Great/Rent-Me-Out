@@ -1,783 +1,319 @@
 "use client";
 
-import Link from "next/link";
-import { useState } from "react";
-import { ApprovalBadge, StatusStamp } from "@/components/ui/status-stamp";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { connectArkivWallet, type ArkivWalletClient } from "@/lib/arkiv";
 import {
-  applications as seedApplications,
-  demo,
-  formatDate,
-  rooms as sampleRooms,
-  type RoomState,
-} from "@/lib/data";
-import { useLiveRooms } from "@/lib/chain/use-live-rooms";
+  fetchPendingPropertyApplications,
+  registrarWallets,
+  submitReview,
+  type PropertyApplicationRecord,
+} from "@/lib/property-applications";
+import {
+  decryptDeedInBrowser,
+  type DeedKeyFile,
+} from "@/lib/swarm-upload";
 
-type AuditEntry = {
-  id: string;
-  action: string;
-  target: string;
-  actor: string;
-  reason: string;
-  time: string;
-  tx: string;
-};
+function dateLabel(seconds: number) {
+  return new Intl.DateTimeFormat("en", {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(new Date(seconds * 1000));
+}
 
-const initialAudit: AuditEntry[] = [
-  {
-    id: "audit-1",
-    action: "Property approved",
-    target: "APP-1036 · Versova 2BHK",
-    actor: "registrar.hedera",
-    reason: "Deed and society NOC verified",
-    time: "2026-10-30 11:42",
-    tx: "0.0.5941282@1778…",
-  },
-  {
-    id: "audit-2",
-    action: "Room sold",
-    target: "Room 2 · Ashoka Residency",
-    actor: "contract event",
-    reason: "USDC + token transfer confirmed",
-    time: "2027-01-02 15:08",
-    tx: demo.purchaseTx,
-  },
-];
+function isDeedKeyFile(value: unknown): value is DeedKeyFile {
+  if (typeof value !== "object" || value === null) return false;
+  const candidate = value as Partial<DeedKeyFile>;
+  return (
+    candidate.version === 1 &&
+    candidate.algorithm === "AES-GCM" &&
+    typeof candidate.applicationKey === "string" &&
+    typeof candidate.reference === "string" &&
+    typeof candidate.key === "string" &&
+    typeof candidate.iv === "string" &&
+    typeof candidate.fileName === "string"
+  );
+}
 
 export function RegistrarConsole() {
-  // Live listings from RentalRegistry. Freezing acts on these ids, so the console must
-  // not offer sample rooms that have no on-chain counterpart.
-  const { rooms: liveRooms, status: liveStatus } = useLiveRooms();
-  const rooms = liveRooms ?? sampleRooms;
-  const [freezeTx, setFreezeTx] = useState<string | null>(null);
-  const [decisionTx, setDecisionTx] = useState<string | null>(null);
-  const [decisionError, setDecisionError] = useState<string | null>(null);
-  const [freezeError, setFreezeError] = useState<string | null>(null);
-  const [freezing, setFreezing] = useState<string | null>(null);
-  const [sweeping, setSweeping] = useState(false);
-  const [sweepNote, setSweepNote] = useState<string | null>(null);
+  const [applications, setApplications] = useState<PropertyApplicationRecord[]>([]);
+  const [selectedKey, setSelectedKey] = useState<string | null>(null);
+  const [wallet, setWallet] = useState<ArkivWalletClient | null>(null);
+  const [reviewer, setReviewer] = useState<`0x${string}` | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [processing, setProcessing] = useState(false);
+  const [error, setError] = useState("");
+  const [reason, setReason] = useState("");
+  const [deedName, setDeedName] = useState("");
+  const [deedUrl, setDeedUrl] = useState<string | null>(null);
+  const [reviewReceipt, setReviewReceipt] = useState<{
+    status: "approved" | "rejected";
+    txHash: string;
+  } | null>(null);
 
-  const [apps, setApps] = useState(seedApplications);
-  const [selectedId, setSelectedId] = useState("APP-1042");
-  const [rejection, setRejection] = useState("");
-  const [processing, setProcessing] = useState<"approve" | "reject" | null>(
-    null,
+  const selected = applications.find((application) => application.key === selectedKey) ?? null;
+  const configured = registrarWallets.length > 0;
+  const isAuthorized = Boolean(
+    reviewer && registrarWallets.includes(reviewer.toLowerCase()),
   );
-  const [roomStates, setRoomStates] = useState<Record<string, RoomState>>({
-    r1: "available",
-    r2: "held",
-    r3: "available",
-  });
-  const [freezeTarget, setFreezeTarget] = useState<string | null>(null);
-  const [freezeReason, setFreezeReason] = useState("");
-  const [audit, setAudit] = useState(initialAudit);
+  const pendingCount = applications.length;
 
-  const selected = apps.find((app) => app.id === selectedId) ?? apps[0];
-
-  const pushAudit = (
-    action: string,
-    target: string,
-    reason: string,
-    tx = "0.0.5941282@1779…",
-  ) => {
-    setAudit((current) => [
-      {
-        id: `audit-${Date.now()}`,
-        action,
-        target,
-        actor: "registrar.hedera",
-        reason,
-        time: new Intl.DateTimeFormat("en-GB", {
-          dateStyle: "medium",
-          timeStyle: "short",
-        }).format(new Date()),
-        tx,
-      },
-      ...current,
-    ]);
-  };
-
-  /**
-   * The registrar's decision, written to Hedera.
-   *
-   * Approving admits the owner's Semaphore commitment to the approved set, which is
-   * what later lets them prove a property is approved without revealing which one.
-   * Local state only changes once the transaction has actually succeeded.
-   */
-  const decide = async (decision: "approved" | "rejected") => {
-    if (!selected || selected.status !== "pending") return;
-    if (decision === "rejected" && !rejection.trim()) return;
-
-    setProcessing(decision === "approved" ? "approve" : "reject");
-    setDecisionError(null);
-    setDecisionTx(null);
+  const reload = useCallback(async () => {
+    setLoading(true);
+    setError("");
     try {
-      const res = await fetch("/api/properties", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          action: decision === "approved" ? "approve" : "reject",
-          applicationId: selected.id,
-          reason: decision === "rejected" ? rejection.trim() : undefined,
-        }),
-      });
-      const data = (await res.json()) as {
-        ok?: boolean; error?: string; transactionHash?: string;
-      };
-      if (!res.ok || !data.ok) {
-        setDecisionError(
-          data.error === "commitment_required"
-            ? "This application has no owner commitment on file, so there is nothing to admit to the approved set."
-            : (data.error ?? "decision_failed"),
-        );
-        return;
-      }
-
-      setApps((current) =>
-        current.map((app) =>
-          app.id === selected.id
-            ? {
-                ...app,
-                status: decision,
-                rejectionReason:
-                  decision === "rejected" ? rejection.trim() : undefined,
-              }
-            : app,
-        ),
+      const next = await fetchPendingPropertyApplications();
+      setApplications(next);
+      setSelectedKey((current) =>
+        current && next.some((application) => application.key === current)
+          ? current
+          : next[0]?.key ?? null,
       );
-      setDecisionTx(data.transactionHash ?? null);
-      pushAudit(
-        decision === "approved" ? "Property approved" : "Property rejected",
-        `${selected.id} · ${selected.nickname}`,
-        decision === "rejected" ? rejection.trim() : "Deed verified",
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not load Arkiv applications.");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void reload();
+  }, [reload]);
+
+  useEffect(() => () => {
+    if (deedUrl) URL.revokeObjectURL(deedUrl);
+  }, [deedUrl]);
+
+  const connectReviewer = async () => {
+    setError("");
+    try {
+      const connected = await connectArkivWallet();
+      if (!registrarWallets.includes(connected.account.toLowerCase())) {
+        setWallet(null);
+        setReviewer(null);
+        throw new Error("This wallet is not on the configured registrar allowlist.");
+      }
+      setWallet(connected.walletClient);
+      setReviewer(connected.account);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not connect registrar wallet.");
+    }
+  };
+
+  const openDeed = async (file?: File) => {
+    if (!file || !selected) return;
+    setError("");
+    setDeedUrl((current) => {
+      if (current) URL.revokeObjectURL(current);
+      return null;
+    });
+    try {
+      const parsed: unknown = JSON.parse(await file.text());
+      if (!isDeedKeyFile(parsed)) {
+        throw new Error("Choose the deed key JSON file supplied by the owner.");
+      }
+      if (!parsed.applicationKey || parsed.applicationKey.toLowerCase() !== selected.key.toLowerCase()) {
+        throw new Error("This key file belongs to a different application.");
+      }
+      const blob = await decryptDeedInBrowser(parsed);
+      setDeedName(parsed.fileName);
+      setDeedUrl(URL.createObjectURL(blob));
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not decrypt this deed.");
+    }
+  };
+
+  const decide = async (status: "approved" | "rejected") => {
+    if (!wallet || !reviewer || !selected || !isAuthorized) return;
+    if (status === "rejected" && !reason.trim()) return;
+    if (!deedUrl) {
+      setError("Open and review the matching deed before recording a decision.");
+      return;
+    }
+    setProcessing(true);
+    setError("");
+    setReviewReceipt(null);
+    try {
+      const receipt = await submitReview(
+        wallet,
+        reviewer,
+        selected.key,
+        status,
+        reason.trim(),
       );
-      setRejection("");
-    } catch {
-      setDecisionError("network_error");
-    } finally {
-      setProcessing(null);
-    }
-  };
-
-  const pending = apps.filter((app) => app.status === "pending").length;
-  const roomList = rooms.map((room, index) => ({
-    ...room,
-    index,
-    // The chain is authoritative: an optimistic local state is only used while a
-    // transaction is in flight.
-    state: roomStates[room.id] ?? room.state,
-  }));
-
-  /**
-   * Freeze or unfreeze on-chain, signed by the registrar on the server.
-   * Local state is only updated once the transaction has actually succeeded.
-   */
-  const runLifecycle = async (
-    listingId: string,
-    action: "cancel" | "expire",
-    label: string,
-  ) => {
-    setFreezing(listingId);
-    setFreezeError(null);
-    setFreezeTx(null);
-    try {
-      const res = await fetch(`/api/rooms/${listingId}/lifecycle`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ action }),
+      setReviewReceipt({ status, txHash: receipt.txHash });
+      setReason("");
+      setDeedUrl((current) => {
+        if (current) URL.revokeObjectURL(current);
+        return null;
       });
-      const data = (await res.json()) as {
-        ok?: boolean; error?: string; state?: string | null; transactionHash?: string;
-      };
-      if (!res.ok || !data.ok) {
-        setFreezeError(
-          data.error === "already_sold"
-            ? "This room has been sold, so it can no longer be cancelled."
-            : data.error === "not_yet_expired"
-              ? "This listing's period has not ended yet."
-              : (data.error ?? "lifecycle_failed"),
-        );
-        return;
-      }
-      setRoomStates((prev) => ({
-        ...prev,
-        [listingId]: (data.state as RoomState) ?? "expired",
-      }));
-      setFreezeTx(data.transactionHash ?? null);
-      pushAudit(
-        action === "cancel" ? "Listing cancelled" : "Room expired",
-        label,
-        action === "cancel" ? "Withdrawn before sale" : "Period ended · token burned",
-      );
-    } catch {
-      setFreezeError("network_error");
+      await reload();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not record the review on Arkiv.");
     } finally {
-      setFreezing(null);
+      setProcessing(false);
     }
   };
 
-  /** Expires every listing whose period has ended. Safe to run when none are due. */
-  const runSweep = async () => {
-    setSweeping(true);
-    setFreezeError(null);
-    setFreezeTx(null);
-    try {
-      const res = await fetch("/api/rooms/sweep", { method: "POST" });
-      const data = (await res.json()) as {
-        ok?: boolean; error?: string; expired?: string[]; transactionHash?: string;
-      };
-      if (!res.ok || !data.ok) {
-        setFreezeError(data.error ?? "sweep_failed");
-        return;
-      }
-      if (!data.expired?.length) {
-        setSweepNote("No listings are due to expire.");
-        return;
-      }
-      setFreezeTx(data.transactionHash ?? null);
-      setSweepNote(`Expired ${data.expired.length} listing(s): ${data.expired.join(", ")}`);
-      pushAudit("Expiry sweep", `${data.expired.length} listing(s)`, "Period ended · tokens burned");
-    } catch {
-      setFreezeError("network_error");
-    } finally {
-      setSweeping(false);
-    }
-  };
+  const walletLabel = useMemo(() =>
+    reviewer ? `${reviewer.slice(0, 8)}…${reviewer.slice(-6)}` : "No reviewer wallet connected",
+  [reviewer]);
 
-  const runFreeze = async (
-    listingId: string,
-    action: "freeze" | "unfreeze",
-    reason: string,
-    label: string,
-  ) => {
-    setFreezing(listingId);
-    setFreezeError(null);
-    setFreezeTx(null);
-    try {
-      const res = await fetch(`/api/rooms/${listingId}/freeze`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ action, reason }),
-      });
-      const data = (await res.json()) as {
-        ok?: boolean;
-        error?: string;
-        state?: string | null;
-        transactionHash?: string;
-      };
-      if (!res.ok || !data.ok) {
-        setFreezeError(data.error ?? "freeze_failed");
-        return;
-      }
-      setRoomStates((prev) => ({
-        ...prev,
-        [listingId]: (data.state as RoomState) ?? (action === "freeze" ? "frozen" : "held"),
-      }));
-      setFreezeTx(data.transactionHash ?? null);
-      pushAudit(action === "freeze" ? "Room frozen" : "Room unfrozen", label, reason);
-    } catch {
-      setFreezeError("network_error");
-    } finally {
-      setFreezing(null);
-    }
-  };
+  if (!configured) {
+    return (
+      <section className="panel panel--pad">
+        <h2>Registrar access is not configured</h2>
+        <p className="small" style={{ marginTop: 10 }}>
+          Set NEXT_PUBLIC_REGISTRAR_WALLETS to a comma-separated list of registrar
+          Rabdi wallet addresses, then rebuild.
+        </p>
+      </section>
+    );
+  }
 
   return (
     <>
       <div className="metric-row">
         <div className="metric">
           <div className="metric__label">Pending applications</div>
-          <div className="metric__value">{pending}</div>
+          <div className="metric__value">{loading ? "…" : pendingCount}</div>
         </div>
         <div className="metric">
-          <div className="metric__label">Approved this month</div>
-          <div className="metric__value">
-            1 <small>Versova 2BHK</small>
-          </div>
+          <div className="metric__label">Registrar wallet</div>
+          <div className="metric__value" style={{ fontSize: 16 }}>{walletLabel}</div>
         </div>
         <div className="metric">
-          <div className="metric__label">Rooms under dispute</div>
-          <div className="metric__value">
-            {
-              Object.values(roomStates).filter((state) => state === "frozen")
-                .length
-            }
-          </div>
-        </div>
-        <div className="metric">
-          <div className="metric__label">Audit entries</div>
-          <div className="metric__value">{audit.length}</div>
+          <div className="metric__label">Queue source</div>
+          <div className="metric__value" style={{ fontSize: 16 }}>Arkiv · Rabdi</div>
         </div>
       </div>
 
-      <div className="registrar-grid">
+      <div className="form-actions" style={{ marginTop: 0 }}>
+        <button type="button" className="btn btn--small" onClick={() => void connectReviewer()}>
+          {reviewer ? "Reconnect registrar wallet" : "Connect registrar wallet"}
+        </button>
+        <button type="button" className="btn btn--small btn--ghost" onClick={() => void reload()} disabled={loading}>
+          Refresh queue
+        </button>
+        {reviewer && !isAuthorized && <span className="badge badge--alert">Not authorized</span>}
+      </div>
+
+      {error && (
+        <div className="notice notice--alert" role="alert" style={{ marginTop: 16 }}>
+          <div><strong>Registrar action failed</strong><p>{error}</p></div>
+        </div>
+      )}
+
+      {reviewReceipt && (
+        <div className="notice notice--verified" style={{ marginTop: 16 }}>
+          <div>
+            <strong>Review recorded: {reviewReceipt.status}</strong>
+            <p className="mono" style={{ overflowWrap: "anywhere" }}>Arkiv transaction: {reviewReceipt.txHash}</p>
+          </div>
+        </div>
+      )}
+
+      <div className="registrar-grid" style={{ marginTop: 20 }}>
         <aside className="panel">
           <div className="panel__head">
             <h2>Review queue</h2>
-            <span className="badge badge--brass">{pending} pending</span>
+            <span className="badge badge--brass">{pendingCount} pending</span>
           </div>
           <div className="queue-list">
-            {apps.map((app) => (
+            {!loading && applications.length === 0 && (
+              <p className="small" style={{ padding: 16 }}>No pending property applications.</p>
+            )}
+            {applications.map((application) => (
               <button
-                key={app.id}
+                key={application.key}
                 type="button"
                 className="queue-item"
-                data-selected={app.id === selectedId}
+                data-selected={application.key === selected?.key}
                 onClick={() => {
-                  setSelectedId(app.id);
-                  setRejection("");
+                  setSelectedKey(application.key);
+                  setDeedUrl((current) => {
+                    if (current) URL.revokeObjectURL(current);
+                    return null;
+                  });
+                  setDeedName("");
+                  setError("");
+                  setReviewReceipt(null);
                 }}
               >
-                <span className="queue-item__id mono">{app.id}</span>
-                <strong>{app.nickname}</strong>
+                <span className="queue-item__id mono">{application.key.slice(0, 14)}…</span>
+                <strong>{application.propertyName}</strong>
                 <span className="queue-item__meta">
-                  {app.locality} · {app.rooms} rooms ·{" "}
-                  {formatDate(app.submittedAt)}
+                  {application.locality}, {application.city} · {application.roomCount} rooms · {dateLabel(application.submittedAt)}
                 </span>
-                <span style={{ marginTop: 8 }}>
-                  <ApprovalBadge state={app.status} />
-                </span>
+                <span style={{ marginTop: 8 }} className="badge badge--brass">Pending review</span>
               </button>
             ))}
           </div>
         </aside>
 
         <section className="panel">
-          <div className="panel__head">
-            <div>
-              <h2>{selected.nickname}</h2>
-              <span className="micro dim">
-                {selected.id} · submitted {formatDate(selected.submittedAt)}
-              </span>
-            </div>
-            <ApprovalBadge state={selected.status} />
-          </div>
-
-          <div className="deed-review">
-            <div className="deed-viewer">
-              <div className="deed-viewer__bar">
-                <span className="mono">{selected.deedName}</span>
-                <span className="badge badge--alert">Registrar-only decrypt</span>
+          {!selected ? (
+            <div className="panel__body"><h2>Select a pending application</h2></div>
+          ) : (
+            <>
+              <div className="panel__head">
+                <div>
+                  <h2>{selected.propertyName}</h2>
+                  <span className="micro dim">{selected.key} · submitted {dateLabel(selected.submittedAt)}</span>
+                </div>
+                <span className="badge badge--brass">Pending</span>
               </div>
-              <div className="deed-viewer__paper" aria-label="Restricted deed preview">
-                <span className="micro dim">Strictly restricted preview</span>
-                <h3>Deed of lease · {selected.nickname}</h3>
-                <span className="deed-viewer__line" />
-                <span className="deed-viewer__line" />
-                <span className="deed-viewer__line deed-viewer__line--short" />
-                <span className="deed-viewer__line" />
-                <span className="deed-viewer__line deed-viewer__line--short" />
-                <div className="deed-viewer__seal">REGISTRAR COPY</div>
-                <p className="micro dim">
-                  Page 1 of {selected.deedPages} · decrypted in-memory · access
-                  audited
-                </p>
-              </div>
-            </div>
+              <div className="panel__body">
+                <div className="buy-panel__list">
+                  <div><span>Owner wallet</span><span className="mono">{selected.owner.slice(0, 8)}…{selected.owner.slice(-6)}</span></div>
+                  <div><span>Locality</span><span>{selected.locality}, {selected.city}</span></div>
+                  <div><span>Rooms requested</span><span>{selected.roomCount}</span></div>
+                  <div><span>Submitted</span><span>{dateLabel(selected.submittedAt)}</span></div>
+                </div>
 
-            <div className="deed-side">
-              <p className="eyebrow">Owner + property</p>
-              <div className="buy-panel__list" style={{ marginTop: 12 }}>
-                <div>
-                  <span>Owner wallet</span>
-                  <span className="mono">
-                    {selected.ownerWallet.slice(0, 6)}…
-                    {selected.ownerWallet.slice(-4)}
-                  </span>
+                <div className="field" style={{ marginTop: 20 }}>
+                  <label htmlFor="deed-key-file">Open the deed key file shared securely by the owner</label>
+                  <input
+                    id="deed-key-file"
+                    type="file"
+                    accept="application/json,.json"
+                    onChange={(event) => void openDeed(event.target.files?.[0])}
+                  />
+                  <span className="field__hint">The key file is processed in this browser and is not uploaded to the app or Arkiv.</span>
                 </div>
-                <div>
-                  <span>Locality</span>
-                  <span>
-                    {selected.locality}, {selected.city}
-                  </span>
-                </div>
-                <div>
-                  <span>Rooms requested</span>
-                  <span>{selected.rooms}</span>
-                </div>
-                <div>
-                  <span>Deed</span>
-                  <span className="mono">{selected.deedPages} pages</span>
-                </div>
-                <div>
-                  <span>World ID</span>
-                  <span className="green">Validated</span>
-                </div>
-                <div>
-                  <span>Commitment</span>
-                  <span className="mono">0x89bb…3ad2</span>
-                </div>
-              </div>
 
-              <div className="notice notice--brass" style={{ marginTop: 14 }}>
-                <span className="notice__icon" aria-hidden="true">
-                  i
-                </span>
-                <div>
-                  <p>{selected.note}</p>
-                </div>
-              </div>
-
-              {selected.status === "pending" ? (
-                <div style={{ marginTop: 18 }}>
-                  <div className="field">
-                    {(decisionTx || decisionError) && (
-                      <p className="micro" style={{ marginBottom: 10 }}>
-                        {decisionTx ? (
-                          <>
-                            <span style={{ color: "green" }}>
-                              ● Recorded on Hedera testnet
-                            </span>{" "}
-                            —{" "}
-                            <a
-                              href={`https://hashscan.io/testnet/transaction/${decisionTx}`}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="mono"
-                            >
-                              {decisionTx.slice(0, 18)}…
-                            </a>
-                          </>
-                        ) : (
-                          <span style={{ color: "crimson" }}>
-                            ● {decisionError} — nothing changed on-chain.
-                          </span>
-                        )}
-                      </p>
-                    )}
-                    <label htmlFor="rejection">
-                      Rejection reason · required to reject
-                    </label>
-                    <textarea
-                      id="rejection"
-                      value={rejection}
-                      onChange={(event) => setRejection(event.target.value)}
-                      placeholder="Write the reason the owner will see, e.g. page 3 is unreadable."
-                    />
+                {deedUrl ? (
+                  <div className="deed-review" style={{ marginTop: 18 }}>
+                    <div className="deed-viewer" style={{ width: "100%" }}>
+                      <div className="deed-viewer__bar"><span className="mono">{deedName}</span><span className="badge badge--verified">Decrypted in browser</span></div>
+                      <iframe title={`Deed for ${selected.propertyName}`} src={deedUrl} style={{ width: "100%", height: 520, border: 0, background: "white" }} />
+                    </div>
                   </div>
-                  <div className="flex wrap gap-8" style={{ marginTop: 12 }}>
-                    <button
-                      type="button"
-                      className="btn btn--verified btn--small"
-                      onClick={() => void decide("approved")}
-                      disabled={processing !== null}
-                    >
-                      {processing === "approve"
-                        ? "Registering on Hedera…"
-                        : "Approve property"}
-                    </button>
-                    <button
-                      type="button"
-                      className="btn btn--alert btn--small"
-                      onClick={() => void decide("rejected")}
-                      disabled={!rejection.trim() || processing !== null}
-                    >
-                      {processing === "reject"
-                        ? "Recording rejection…"
-                        : "Reject with reason"}
-                    </button>
+                ) : (
+                  <div className="notice notice--brass" style={{ marginTop: 16 }}>
+                    <div><strong>Deed is not open</strong><p>The owner must send the matching key JSON file to the authorized registrar through a secure channel.</p></div>
                   </div>
-                  <p className="form-actions__note" style={{ marginTop: 10 }}>
-                    Approval registers the opaque property commitment and updates
-                    the approved-set root. Rejection writes the reason and mints
-                    no tokens.
-                  </p>
-                </div>
-              ) : (
-                <div
-                  className={`notice ${
-                    selected.status === "approved"
-                      ? "notice--verified"
-                      : "notice--alert"
-                  }`}
-                  style={{ marginTop: 18 }}
-                >
-                  <span className="notice__icon" aria-hidden="true">
-                    {selected.status === "approved" ? "✓" : "!"}
-                  </span>
-                  <div>
-                    <strong>
-                      {selected.status === "approved"
-                        ? "Property approved on Hedera."
-                        : "Application rejected."}
-                    </strong>
-                    <p>
-                      {selected.status === "approved"
-                        ? "The owner can now create one room token per room."
-                        : selected.rejectionReason}
-                    </p>
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
-        </section>
-      </div>
-
-      <section className="panel" id="properties" style={{ marginTop: 24 }}>
-        <div className="panel__head">
-          <h2>Rooms + dispute controls</h2>
-          <button
-            type="button"
-            className="btn btn--ghost btn--small"
-            disabled={sweeping || liveStatus !== "live"}
-            onClick={() => void runSweep()}
-          >
-            {sweeping ? "Running expiry sweep…" : "Run expiry sweep"}
-          </button>
-          <span className="micro">
-            {liveStatus === "live" ? (
-              <span style={{ color: "green" }}>● Live · RentalRegistry</span>
-            ) : liveStatus === "loading" ? (
-              <span className="dim">Reading listings…</span>
-            ) : (
-              // Freezing a sample room would fail: it has no on-chain listing.
-              <span style={{ color: "crimson" }}>
-                ● Sample rooms — freeze is unavailable
-              </span>
-            )}
-          </span>
-          <span className="badge badge--quiet">Room 2 · Ashoka Residency</span>
-        </div>
-        <div className="panel__body panel__body--flush">
-          <div className="table-scroll">
-            <table className="data-table">
-              <thead>
-                <tr>
-                  <th>Room</th>
-                  <th>Token</th>
-                  <th>Holder</th>
-                  <th>Period</th>
-                  <th>State</th>
-                  <th>Action</th>
-                </tr>
-              </thead>
-              <tbody>
-                {liveStatus !== "live" && (
-                  <tr>
-                    <td colSpan={6} className="dim micro">
-                      {liveStatus === "loading"
-                        ? "Reading listings from Hedera…"
-                        : "The registry is unreachable. No listings are shown, because sample rooms would name holders who do not hold anything."}
-                    </td>
-                  </tr>
                 )}
-                {liveStatus === "live" &&
-                  roomList.map((room) => (
-                  <tr key={room.id}>
-                    <td>
-                      <strong>Room {room.index + 1}</strong>
-                      <div className="dim" style={{ fontSize: 10 }}>
-                        {room.name.split("·")[1]?.trim()}
-                      </div>
-                    </td>
-                    <td className="mono">{room.tokenId}</td>
-                    <td className="mono">
-                      {(room.state === "held" || room.state === "frozen") &&
-                      room.holder
-                        ? `${room.holder.slice(0, 6)}…${room.holder.slice(-4)}`
-                        : "—"}
-                    </td>
-                    <td>
-                      {formatDate(room.validFrom)} – {formatDate(room.validUntil)}
-                    </td>
-                    <td>
-                      <StatusStamp state={room.state} />
-                    </td>
-                    <td>
-                      {room.state === "frozen" ? (
-                        <button
-                          type="button"
-                          className="btn btn--ghost btn--small"
-                          disabled={freezing === room.id || liveStatus !== "live"}
-                          onClick={() =>
-                            void runFreeze(
-                              room.id,
-                              "unfreeze",
-                              "Dispute resolved",
-                              `${room.name} · Ashoka Residency`,
-                            )
-                          }
-                        >
-                          {freezing === room.id ? "Unfreezing…" : "Unfreeze"}
-                        </button>
-                      ) : room.state === "held" ? (
-                        <button
-                          type="button"
-                          className="btn btn--alert btn--small"
-                          onClick={() => {
-                            setFreezeTarget(room.id);
-                            setFreezeReason("");
-                          }}
-                        >
-                          Freeze
-                        </button>
-                      ) : room.state === "available" ? (
-                        <button
-                          type="button"
-                          className="btn btn--ghost btn--small"
-                          disabled={freezing === room.id || liveStatus !== "live"}
-                          onClick={() =>
-                            void runLifecycle(
-                              room.id,
-                              "cancel",
-                              `${room.name} · Ashoka Residency`,
-                            )
-                          }
-                        >
-                          {freezing === room.id ? "Cancelling…" : "Cancel listing"}
-                        </button>
-                      ) : room.state === "expired" ||
-                        room.state === "cancelled" ? (
-                        <span className="dim" style={{ fontSize: 10.5 }}>
-                          Token burned
-                        </span>
-                      ) : (
-                        <span className="dim" style={{ fontSize: 10.5 }}>
-                          No held right
-                        </span>
-                      )}
-                    </td>
-                    </tr>
-                  ))}
-              </tbody>
-            </table>
-          </div>
 
-          {sweepNote && !freezeTx && (
-            <div className="panel__body" style={{ borderTop: "1px solid var(--line)" }}>
-              <p className="micro dim">{sweepNote}</p>
-            </div>
-          )}
-
-          {(freezeTx || freezeError) && (
-            <div className="panel__body" style={{ borderTop: "1px solid var(--line)" }}>
-              {freezeTx ? (
-                <p className="micro">
-                  <span style={{ color: "green" }}>● Confirmed on Hedera testnet</span>{" "}
-                  —{" "}
-                  <a
-                    href={`https://hashscan.io/testnet/transaction/${freezeTx}`}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="mono"
-                  >
-                    {freezeTx.slice(0, 18)}…
-                  </a>
-                </p>
-              ) : (
-                <p className="micro" style={{ color: "crimson" }}>
-                  ● The freeze did not go through ({freezeError}). Nothing changed
-                  on-chain.
-                </p>
-              )}
-            </div>
-          )}
-
-          {freezeTarget && (
-            <div className="panel__body" style={{ borderTop: "1px solid var(--line)" }}>
-              <div className="notice notice--alert">
-                <span className="notice__icon" aria-hidden="true">
-                  !
-                </span>
-                <div style={{ flex: 1 }}>
-                  <strong>
-                    Freeze Room{" "}
-                    {rooms.findIndex((room) => room.id === freezeTarget) + 1}?
-                  </strong>
-                  <p>
-                    The public verification page will immediately show{" "}
-                    <b>Frozen — under review</b>. A reason is required and will
-                    be written to the audit log.
-                  </p>
-                  <div className="field" style={{ marginTop: 12 }}>
-                    <label htmlFor="freeze-reason">Reason</label>
-                    <input
-                      id="freeze-reason"
-                      value={freezeReason}
-                      onChange={(event) => setFreezeReason(event.target.value)}
-                      placeholder="Duplicate broker claim raised at the viewing."
-                    />
-                  </div>
-                  <div className="flex wrap gap-8" style={{ marginTop: 12 }}>
-                    <button
-                      type="button"
-                      className="btn btn--alert btn--small"
-                      disabled={!freezeReason.trim() || freezing !== null}
-                      onClick={() => {
-                        const target = freezeTarget;
-                        const reason = freezeReason.trim();
-                        const room = rooms.find((r) => r.id === target);
-                        setFreezeTarget(null);
-                        setFreezeReason("");
-                        void runFreeze(
-                          target,
-                          "freeze",
-                          reason,
-                          `${room?.name ?? `Room ${target}`} · Ashoka Residency`,
-                        );
-                      }}
-                    >
-                      Freeze room
-                    </button>
-                    <button
-                      type="button"
-                      className="btn btn--ghost btn--small"
-                      onClick={() => setFreezeTarget(null)}
-                    >
-                      Cancel
-                    </button>
-                  </div>
+                <div className="field" style={{ marginTop: 18 }}>
+                  <label htmlFor="review-reason">Review note {reason.trim() ? "" : "· required to reject"}</label>
+                  <textarea id="review-reason" value={reason} onChange={(event) => setReason(event.target.value)} placeholder="Record a concise, non-sensitive review note." />
                 </div>
+
+                <div className="flex wrap gap-8" style={{ marginTop: 14 }}>
+                  <button type="button" className="btn btn--verified btn--small" onClick={() => void decide("approved")} disabled={!isAuthorized || !deedUrl || processing}>
+                    {processing ? "Recording…" : "Approve property"}
+                  </button>
+                  <button type="button" className="btn btn--alert btn--small" onClick={() => void decide("rejected")} disabled={!isAuthorized || !deedUrl || !reason.trim() || processing}>
+                    Reject with reason
+                  </button>
+                </div>
+                <p className="form-actions__note" style={{ marginTop: 12 }}>
+                  Decisions are new Arkiv entities signed by the registrar wallet. The application and review metadata are public; deed contents and key remain off Arkiv.
+                </p>
               </div>
-            </div>
+            </>
           )}
-        </div>
-      </section>
-
-      <section className="panel" id="audit" style={{ marginTop: 24 }}>
-        <div className="panel__head">
-          <h2>Audit log</h2>
-          <span className="badge badge--quiet">{audit.length} entries</span>
-        </div>
-        <div className="panel__body panel__body--flush">
-          <div className="table-scroll">
-            <table className="data-table">
-              <thead>
-                <tr>
-                  <th>Action</th>
-                  <th>Target</th>
-                  <th>Actor</th>
-                  <th>Reason</th>
-                  <th>Time</th>
-                  <th>Transaction</th>
-                </tr>
-              </thead>
-              <tbody>
-                {audit.map((entry) => (
-                  <tr key={entry.id}>
-                    <td>
-                      <strong>{entry.action}</strong>
-                    </td>
-                    <td>{entry.target}</td>
-                    <td className="mono">{entry.actor}</td>
-                    <td>{entry.reason}</td>
-                    <td>{entry.time}</td>
-                    <td className="mono">{entry.tx}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </section>
-
-      <div className="between wrap mt-24">
-        <Link href="/verify/rmo-3b-andheri?room=r2" className="text-link">
-          Open the tenant-facing page
-        </Link>
-        <span className="micro dim">
-          Registrar actions are permissioned and audited in this demo.
-        </span>
+        </section>
       </div>
     </>
   );
