@@ -45,3 +45,10 @@ export const RightsRecord = defineSchema("rentmeout.rights-record.v1", {
   token: addr(),
   purchaseTx: str(),
 });
+
+/** Minimal public wallet profile; never add personal or identity documents here. */
+export const UserProfile = defineSchema("rentmeout.user-profile.v1", {
+  profileId: str().indexed(),
+  wallet: addr().indexed(),
+  role: str().indexed(),
+});
