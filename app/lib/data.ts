@@ -40,6 +40,13 @@ export interface Property {
   description: string;
 }
 
+// Set NEXT_PUBLIC_SITE_URL at build time to the final ENS URL, e.g.
+// https://rentmeout.eth.limo
+export const siteUrl =
+  process.env.NEXT_PUBLIC_SITE_URL?.replace(/\/$/, "") ??
+  "https://rentmeout.xyz";
+export const siteHost = siteUrl.replace(/^https?:\/\//, "");
+
 export const demo = {
   propertyId: "rmo-3b-andheri",
   propertyName: "Ashoka Residency",

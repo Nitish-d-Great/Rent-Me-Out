@@ -18,6 +18,7 @@ An owner tokenises the right to rent out each room for a fixed period, a broker 
   - [Hedera — Chain of Record](#hedera--chain-of-record)
   - [World — Human Verification via Selfie Check](#world--human-verification-via-selfie-check)
   - [Arkiv + Swarm — Public Data Layer](#arkiv--swarm--public-data-layer)
+- [Web3 Data Plan — Arkiv + Swarm + ZK](#web3-data-plan--arkiv--swarm--zk)
 - [Smart Contracts](#smart-contracts)
 - [Tech Stack](#tech-stack)
 - [User Flows](#user-flows)
@@ -79,15 +80,21 @@ sequenceDiagram
     participant BE as Platform backend
     participant HED as Hedera · RentalRegistry + ATS
     participant ARK as Arkiv
+    participant SW as Swarm
+    participant ZK as Property proof service
+    participant UI as Tenant verify page
 
     Owner->>BE: World ID proof (owner-verify)
     BE->>HED: allowlist owner wallet (registrar key)
     Owner->>BE: Property details + deed PDF
-    BE->>ARK: PropertyApplication (pending)
+    BE->>SW: Encrypt and upload deed bundle
+    BE->>ARK: PropertyApplication (opaque ID + safe fields, pending)
 
     Registrar->>ARK: query status = pending
-    Registrar->>HED: registerProperty(id, owner, deedHash)
-    BE->>ARK: status -> approved
+    Registrar->>BE: request protected deed review
+    BE->>SW: fetch encrypted deed using protected key reference
+    BE->>HED: register approved property commitment
+    BE->>ARK: status -> approved; publish root version
 
     Owner->>HED: createListing(N rooms, period, prices)
     HED->>Owner: N room tokens minted (one per room)
@@ -104,11 +111,18 @@ sequenceDiagram
     HED-->>BE: RoomSold event
     BE->>ARK: RightsRecord, status = sold
 
-    Tenant->>ARK: verify(propertyId)
-    Tenant->>HED: holderOf(propertyId, roomIndex)
+    Tenant->>ARK: lookup(opaqueRoomId)
+    Tenant->>HED: holderOf(roomId, roomIndex)
+    Tenant->>ZK: request proof for opaque room + current root + nonce
+    ZK-->>UI: proof and public inputs only
+    UI->>UI: verify proof locally; show property attestation result
     Tenant->>Broker: request presence check
     Broker->>BE: session proof (proveSession on saved session)
     BE-->>Tenant: green / red
+
+    Broker->>BE: mark tenant handoff complete
+    Tenant->>BE: confirm with single-use QR/link challenge
+    BE->>BE: purge private tenant/session data and crypto-erase deed key
 
     Registrar->>HED: freezeRoom() on dispute
     HED->>HED: scheduled burn at end date
@@ -244,16 +258,44 @@ Arkiv replaces a traditional database. Its built-in entity expiry matches our ti
 **Why Arkiv over Postgres:**
 If listings sat in a database, only our app could read them and they'd need cleanup jobs. On Arkiv, owners own their listing data, anyone can query the verify index without our permission, and records expire with the rights they describe.
 
-**Entities:**
+**Public Arkiv entities:** treat every attribute, query result, and pointer as public. Keep documents, exact address, owner legal identity, and key-bearing Swarm references out of Arkiv.
 
-| Entity | Key Fields | Expires |
+| Entity | Public-safe fields | Expires |
 | --- | --- | --- |
-| `PropertyApplication` | propertyId, city, status (pending/approved/rejected), deedRef | 30 days after decision |
-| `RoomListing` | propertyId, roomIndex, priceUSDC, startDate, endDate, status (available/sold) | Listing end date |
-| `RightsRecord` | propertyId, roomIndex, holderWallet, validUntil, tokenAddress, hederaTxId | Listing end date |
-| `BrokerProfile` (optional) | wallet, verified, roomsHeld, completedPeriods | None / yearly |
+| `PropertyApplication` | opaque application ID, owner wallet/pseudonym, salted property commitment, status, schema/root version | 30 days after decision |
+| `RoomListing` | opaque room/property commitment, room index/label, coarse locality, sanitized description, dates, price, token ID, status | Listing end date |
+| `RightsRecord` | opaque room ID, holder wallet, validity, token reference, Hedera transaction ID | Listing end date |
+| `BrokerProfile` (optional) | wallet and public verification status only | None / yearly |
 
-**Swarm:** deed PDFs (encrypted) and property photos are stored on Swarm. Arkiv entities hold references. The encrypted deed reference is never stored in clear text on Arkiv — it is either re-encrypted with the registrar's key or kept in the backend with only a hash on Arkiv.
+**Swarm:** encrypted deeds and private property evidence live on Swarm. Keep the decryption key separate from the content address; the key-bearing full reference belongs in a protected key store or is encrypted to authorized recipients. Arkiv may contain an opaque application ID and optionally the Swarm address without the key, but never the full encrypted reference/key. Use a private Bee node or a controlled TLS path for encrypted uploads and retrieval.
+
+Exact location should be disclosed privately only when needed to arrange a viewing. Public photos require owner consent and removal of EXIF/geolocation metadata.
+
+## Web3 Data Plan — Arkiv + Swarm + ZK
+
+The detailed actor access model, Arkiv entity fields, Swarm key lifecycle, owner/registrar/broker/tenant flows, ZK claim, revocation behavior, and build sequence are in [web3-data-plan.md](./web3-data-plan.md).
+
+### Database boundary
+
+- **Arkiv:** public, searchable application/listing index. It is not the source of truth for token ownership and must not contain private deed data.
+- **Swarm:** encrypted deed/document storage. Swarm encryption is possession-based; anyone with the full key-bearing reference can decrypt, so protect that reference outside Arkiv and logs.
+- **Hedera:** authoritative approval/rights lifecycle and current holder state.
+- **Private backend/key vault:** World ID nullifier-to-wallet binding, Swarm key material, registrar access audit, and any private ZK witness.
+- **ZK:** prove that an opaque room commitment is included in the current registrar-approved property set and matches a room-period claim. The browser verifies the proof; it learns no deed or exact address.
+
+### Privacy and trust boundary
+
+The registrar must review the official home documents before approving the property commitment. ZK proves that a commitment was approved and is linked to the room rights; it does not independently prove that a deed is genuine or that the proof QR is attached to the physical property. World ID broker-presence and property-attestation proofs are separate checks.
+
+### Delete private data after tenant handoff
+
+In this product, the broker keeps the on-chain rental-right token; the tenant receives occupancy through the rental agreement. Treat **tenant handoff confirmed** as the deletion trigger. The broker marks the room handed over, and the tenant confirms with a single-use QR/link challenge that does not require an account or collect contact details.
+
+After confirmation, delete temporary tenant/session records, the private deed copy and ZK witness from platform storage, key-bearing Swarm references, and Arkiv application/handoff entities. Keep only the opaque property/room proof commitment and the minimum active rights record needed for the tenant to verify the room. Remove or expire the public listing and proof index when the rental-right period ends.
+
+Arkiv entities can be deleted by their owner, so the entities that need automated cleanup must be created by a cleanup-capable platform wallet. Swarm does not provide general deletion of uploaded content: destroy the controlled decryption key and remove local pointers/pins (crypto-erasure), while recognizing that downloaded copies or network ciphertext may persist. These systems' deletion capabilities differ; see [Arkiv entity deletion](https://docs.arkiv.network/writing/change/) and [Swarm's storage model](https://docs.ethswarm.org/docs/develop/dynamic-content/).
+
+> **Build status:** Arkiv/Swarm is part of the project data flow. The ZK property-attestation proof is the next planned layer; do not describe it as implemented until the proof circuit, root publication, and in-browser verification are deployed.
 
 ---
 
@@ -446,8 +488,10 @@ GREEN: Broker is the token holder     RED: Impostor - do not proceed
 | `POST /api/listings/:id/issue` | Issues one ATS token per room to the owner (compliance configured); writes `RoomListing` entities to Arkiv |
 | `POST /api/presence/:roomId/start` | Issues a stateless, HMAC-signed viewing challenge (nonce + short expiry); no storage |
 | `POST /api/presence/verify` | Checks broker's fresh nullifier against the token holder |
+| `POST /api/tenancies/:id/handoff/confirm` | Records broker + tenant confirmation with a short-lived one-time challenge and queues private-data deletion |
 | `GET /api/verify/:propertyId` | Arkiv query for room records, confirmed against `holderOf()` on Hedera |
 | Event listener (worker) | Watches `RoomSold`, `RoomFrozen`, `RoomBurned` events; updates Arkiv |
+| Handoff cleanup worker | Deletes private tenant/session and deed data, crypto-erases controlled Swarm keys, and deletes eligible Arkiv entities |
 
 ---
 

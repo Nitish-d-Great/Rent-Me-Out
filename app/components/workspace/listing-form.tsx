@@ -16,6 +16,7 @@ import {
   formatUsdc,
   property,
   rooms,
+  siteHost,
 } from "@/lib/data";
 
 type Phase = "idle" | "issuing" | "issued";
@@ -235,7 +236,7 @@ export function ListingForm() {
             holder against Hedera and can run a fresh presence check.
           </p>
           <p className="mono" style={{ marginTop: 14, fontSize: 10.5, wordBreak: "break-all" }}>
-            rentmeout.xyz/verify/rmo-3b-andheri?room=r2
+            {siteHost}/verify/rmo-3b-andheri?room=r2
           </p>
         </aside>
       </div>
