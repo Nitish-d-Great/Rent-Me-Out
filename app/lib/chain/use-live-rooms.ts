@@ -1,7 +1,9 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import type { Room, RoomState } from "@/lib/data";
+import type { Room } from "@/lib/data";
+import type { RoomRecord } from "./registry";
+import { recordToRoom, shortAddress } from "./to-room";
 
 /**
  * Rooms as the registry reports them, mapped into the shape the verify UI already
@@ -21,41 +23,8 @@ interface ApiRoom {
   roomTag: string;
 }
 
-const TINTS = ["tint-a", "tint-b", "tint-c"];
-
-/** 0x1234…abcd — the form the verify UI already uses. */
-export function shortAddress(address: string): string {
-  return `${address.slice(0, 6)}…${address.slice(-4)}`;
-}
-
 function toRoom(r: ApiRoom, index: number): Room {
-  // The registry has no "none"; treat anything unrecognised as available so the page
-  // never claims rights that do not exist.
-  const state: RoomState =
-    r.state === "held" || r.state === "frozen" || r.state === "expired"
-      ? (r.state as RoomState)
-      : "available";
-
-  return {
-    id: r.listingId,
-    tokenId: `#${r.listingId} · tag ${r.roomTag.slice(0, 8)}…`,
-    name: `Room ${r.listingId}`,
-    note: "on-chain listing",
-    price: Number(r.price),
-    state,
-    holder: r.holder ?? undefined,
-    holderName: r.holder ? "Verified broker" : undefined,
-    // The registry stores a hash of the World ID identity, never a raw nullifier,
-    // so this is safe to display.
-    holderNullifier: r.holderIdentity
-      ? `0x${BigInt(r.holderIdentity).toString(16).slice(0, 12)}…`
-      : undefined,
-    // formatDate() appends "T00:00:00Z", so it needs a bare YYYY-MM-DD. Passing a full
-    // ISO string produces "…000ZT00:00:00Z" and an Invalid Date that crashes the page.
-    validFrom: r.start.slice(0, 10),
-    validUntil: r.end.slice(0, 10),
-    tint: TINTS[index % TINTS.length],
-  };
+  return recordToRoom(r as unknown as RoomRecord, index);
 }
 
 export type LiveStatus = "loading" | "live" | "unavailable";
@@ -95,3 +64,5 @@ export function useLiveRooms(): {
 
   return { rooms, status, rootVersion };
 }
+
+export { shortAddress };
