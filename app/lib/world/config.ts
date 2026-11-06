@@ -35,8 +35,10 @@ export const WORLD_ENVIRONMENT: WorldEnvironment =
 export interface RpContext {
   rp_id: string;
   nonce: string;
-  created_at: string;
-  expires_at: string;
+  /** Unix seconds, NOT an ISO string. */
+  created_at: number;
+  /** Unix seconds. Default TTL is 300s. */
+  expires_at: number;
   signature: string;
 }
 

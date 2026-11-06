@@ -1,6 +1,6 @@
 "use client";
 
-import { IDKit, CredentialRequest } from "@worldcoin/idkit-core";
+import { IDKit, CredentialRequest, any as anyOf } from "@worldcoin/idkit-core";
 import {
   WORLD_ACTIONS,
   WORLD_ENVIRONMENT,
@@ -18,18 +18,23 @@ import type { SignedChallenge } from "./challenge";
 const POLL_TIMEOUT_MS = 120_000;
 
 /**
- * The credential, isolated so it is swappable.
+ * Proof of Human preferred, Selfie Check accepted.
  *
- * Production intent is Proof of Human for both enrollment moments. We ship Selfie Check
- * because PoH requires a physical Orb visit. See the trust-moments table in README.
+ * The SDK exposes `any()`, which the prose docs never mention: it requests the first
+ * credential the user can satisfy. That gives us exactly the proportionality the IDKit
+ * bounty asks for without forcing a single choice —
  *
- * NOTE, and this is narrower than "one line": for OWNER enrollment the swap really is
- * one call — `.preset(proofOfHuman())` instead of `.constraints(...)`. For BROKER
- * enrollment it is not, because the broker needs a session for repeated viewing checks
- * and **session support for PoH is undocumented**. Until World documents it, broker
- * enrollment is pinned to Selfie Check regardless of Orb access.
+ *   - a user who has been to an Orb proves personhood at the highest assurance;
+ *   - a user who has not still enrolls via Selfie Check rather than being turned away.
+ *
+ * It also covers the bounty's "unavailable credential" alternative path for free: an
+ * unavailable PoH degrades instead of failing.
+ *
+ * The backend learns which credential was actually used from the response item's
+ * `identifier`, so the assurance level is never assumed.
  */
-const CREDENTIAL = () => CredentialRequest("selfie");
+const CREDENTIAL = () =>
+  anyOf(CredentialRequest("proof_of_human"), CredentialRequest("selfie"));
 
 /** Where the broker's own session handle lives. Never sent to another user. */
 const SESSION_STORAGE_KEY = "rmo.world.session";
@@ -51,6 +56,14 @@ export function clearSessionId() {
  * Fresh per request -- the docs require a new RP signature for session creation and
  * each subsequent check, and the default TTL is 300s.
  */
+function appId(): `app_${string}` {
+  const value = process.env.NEXT_PUBLIC_WORLD_APP_ID;
+  if (!value?.startsWith("app_")) {
+    throw new WorldError("network");
+  }
+  return value as `app_${string}`;
+}
+
 async function rpContext(action?: WorldAction): Promise<RpContext> {
   const res = await fetch("/api/world/rp-context", {
     method: "POST",
@@ -83,17 +96,15 @@ export async function enroll(
   action: WorldAction,
   wallet: string,
 ): Promise<{ sessionId: string | null }> {
-  const appId = process.env.NEXT_PUBLIC_WORLD_APP_ID;
-  if (!appId) throw new WorldError("network");
-
   const context = await rpContext(action);
 
   let result: unknown;
   try {
     const request = await IDKit.request({
-      app_id: appId,
+      app_id: appId(),
       action,
       rp_context: context,
+      // Required to be false when minting a session -- the SDK enforces this.
       allow_legacy_proofs: false,
       session_id: "create",
       environment: WORLD_ENVIRONMENT,
@@ -102,10 +113,12 @@ export async function enroll(
     const completion = await request.pollUntilCompletion({
       timeout: POLL_TIMEOUT_MS,
     });
+    // pollUntilCompletion never throws -- it returns a discriminated union, so a
+    // cancelled or timed-out flow arrives here as success: false.
+    if (!completion.success) throw new WorldError("cancelled");
     result = completion.result;
-  } catch {
-    // User dismissed the World App, or the poll timed out. Not an error state --
-    // the bounty asks for cancellation to be a handled path.
+  } catch (error) {
+    if (error instanceof WorldError) throw error;
     throw new WorldError("cancelled");
   }
 
@@ -156,19 +169,18 @@ export async function provePresence(
   roomId: string,
   challenge: SignedChallenge,
 ): Promise<PresenceOutcome> {
-  const appId = process.env.NEXT_PUBLIC_WORLD_APP_ID;
   const sessionId = storedSessionId();
-
-  if (!appId) throw new WorldError("network");
-  if (!sessionId) return { match: false, reason: "no_session_on_this_device" };
+  if (!sessionId?.startsWith("session_")) {
+    return { match: false, reason: "no_session_on_this_device" };
+  }
 
 
   const context = await rpContext();
 
   let result: unknown;
   try {
-    const request = await IDKit.proveSession(sessionId, {
-      app_id: appId,
+    const request = await IDKit.proveSession(sessionId as `session_${string}`, {
+      app_id: appId(),
       rp_context: context,
       environment: WORLD_ENVIRONMENT,
     }).constraints(CREDENTIAL());
@@ -176,6 +188,7 @@ export async function provePresence(
     const completion = await request.pollUntilCompletion({
       timeout: POLL_TIMEOUT_MS,
     });
+    if (!completion.success) return { match: false, reason: "cancelled" };
     result = completion.result;
   } catch {
     return { match: false, reason: "cancelled" };
