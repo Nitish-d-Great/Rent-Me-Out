@@ -32,8 +32,15 @@ export const REGISTRY_ABI = parseAbi([
   "error NoSuchListing()",
 ]);
 
-/** RoomState, as the registry reports it. */
-export const ROOM_STATE = ["none", "available", "held", "frozen", "expired"] as const;
+/**
+ * RoomState, in the contract's own order:
+ * Unknown, Available, Held, Frozen, Expired, Cancelled.
+ * Omitting "cancelled" made a cancelled listing decode as undefined, fall through to
+ * "available", and offer a buy button on a burned token.
+ */
+export const ROOM_STATE = [
+  "none", "available", "held", "frozen", "expired", "cancelled",
+] as const;
 export type RoomState = (typeof ROOM_STATE)[number];
 
 export interface RoomRecord {
@@ -75,19 +82,22 @@ const ZERO = "0x0000000000000000000000000000000000000000";
 export async function readRoom(listingId: bigint): Promise<RoomRecord | null> {
   const address = registryAddress();
   try {
-    const [state, valid, holder, start, end, price, roomTag] =
-      await publicClient().readContract({
+    // Both reads go out together: done in sequence this costs two round trips per
+    // room, which multiplies across a page that lists several.
+    const [room, identity] = await Promise.all([
+      publicClient().readContract({
         address, abi: REGISTRY_ABI, functionName: "verifyRoom", args: [listingId],
-      });
+      }),
+      publicClient()
+        .readContract({
+          address, abi: REGISTRY_ABI, functionName: "holderIdentity", args: [listingId],
+        })
+        // Optional: an unsold room has no identity bound.
+        .catch(() => 0n),
+    ]);
 
-    let holderIdentity: bigint = 0n;
-    try {
-      holderIdentity = await publicClient().readContract({
-        address, abi: REGISTRY_ABI, functionName: "holderIdentity", args: [listingId],
-      });
-    } catch {
-      // Optional: an unsold room has no identity bound.
-    }
+    const [state, valid, holder, start, end, price, roomTag] = room;
+    const holderIdentity = identity;
 
     return {
       listingId: listingId.toString(),
@@ -106,16 +116,70 @@ export async function readRoom(listingId: bigint): Promise<RoomRecord | null> {
   }
 }
 
-/** Current approved-set root version, shown on the verify page. */
+/**
+ * Current approved-set root version, shown on the verify page.
+ *
+ * Cached on the same terms as the listings: /api/rooms asks for both on every request,
+ * so leaving this uncached meant each call still paid one RPC round trip and warm
+ * responses stayed as variable as cold ones.
+ */
+let rootVersionCache: { at: number; value: string } | null = null;
+
 export async function readRootVersion(): Promise<string> {
+  if (rootVersionCache && Date.now() - rootVersionCache.at < ROOMS_TTL_MS) {
+    return rootVersionCache.value;
+  }
   const v = await publicClient().readContract({
     address: registryAddress(), abi: REGISTRY_ABI, functionName: "rootVersion",
   });
-  return v.toString();
+  const value = v.toString();
+  rootVersionCache = { at: Date.now(), value };
+  return value;
+}
+
+/**
+ * A very short cache over the full listing read.
+ *
+ * Reading every room costs listingCount + two calls per listing, and several
+ * components ask for it on the same page load. Uncached, those multiply into dozens of
+ * RPC calls that Hashio throttles -- a page took 27s to settle while a single warm
+ * request took 2s. The window is small enough that a freeze or purchase shows up
+ * almost immediately, and write responses carry the new state anyway.
+ *
+ * In-flight requests share one promise, so concurrent callers never stack reads.
+ */
+// 3s expired between page loads, so every navigation paid a cold read -- 10-20s when
+// Hashio is slow. Writes call invalidateRooms(), so a state change still appears at
+// once; this window only affects a listing someone else changed.
+const ROOMS_TTL_MS = 20_000;
+let roomsCache: { at: number; rooms: RoomRecord[] } | null = null;
+let roomsInFlight: Promise<RoomRecord[]> | null = null;
+
+/** Drops the cache, for use straight after a write. */
+export function invalidateRooms(): void {
+  roomsCache = null;
+  rootVersionCache = null;
 }
 
 /** Every listing the registry knows about. Listing ids are 1-indexed. */
 export async function readAllRooms(): Promise<RoomRecord[]> {
+  if (roomsCache && Date.now() - roomsCache.at < ROOMS_TTL_MS) {
+    return roomsCache.rooms;
+  }
+  if (roomsInFlight) return roomsInFlight;
+
+  roomsInFlight = readAllRoomsUncached()
+    .then((rooms) => {
+      roomsCache = { at: Date.now(), rooms };
+      return rooms;
+    })
+    .finally(() => {
+      roomsInFlight = null;
+    });
+  return roomsInFlight;
+}
+
+async function readAllRoomsUncached(): Promise<RoomRecord[]> {
   const count = await publicClient().readContract({
     address: registryAddress(), abi: REGISTRY_ABI, functionName: "listingCount",
   });
