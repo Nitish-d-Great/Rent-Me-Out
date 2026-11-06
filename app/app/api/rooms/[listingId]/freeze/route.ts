@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { freezeRoom, unfreezeRoom } from "@/lib/chain/registry-write";
 import { readRoom } from "@/lib/chain/registry";
+import { syncListing } from "@/lib/arkiv/sync";
+import { isRegistrar } from "@/lib/registrar-auth";
 
 /**
  * Freeze or unfreeze a room, signed by the registrar.
@@ -12,6 +14,9 @@ export async function POST(
   request: Request,
   context: { params: Promise<{ listingId: string }> },
 ) {
+  if (!isRegistrar(request)) {
+    return NextResponse.json({ error: "registrar_only" }, { status: 401 });
+  }
   const { listingId: raw } = await context.params;
 
   let listingId: bigint;
@@ -41,6 +46,8 @@ export async function POST(
         ? await freezeRoom(listingId, reason)
         : await unfreezeRoom(listingId, reason);
 
+    // The freeze is final on Hedera, so a failed index update must not report it as failed.
+    await syncListing(listingId).catch((error) => console.error("[freeze] not indexed:", error));
     const room = await readRoom(listingId);
     return NextResponse.json({
       ok: true,

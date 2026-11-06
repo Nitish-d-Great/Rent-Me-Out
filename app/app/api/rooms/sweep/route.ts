@@ -30,6 +30,7 @@ export async function POST() {
       return NextResponse.json({ ok: true, expired: [], note: "nothing due" });
     }
 
+    // Nothing to sync: the Arkiv entities expired on their own when the period ended.
     const hash = await expireListings(due.map((room) => BigInt(room.listingId)));
     return NextResponse.json({
       ok: true,

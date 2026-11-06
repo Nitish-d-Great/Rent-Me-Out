@@ -2,92 +2,63 @@
 
 import Link from "next/link";
 import { useMemo, useState } from "react";
-import { addr, dec, u64 } from "@arkiv-network/sdk/schema";
+import { readIdentity } from "@/lib/chain/owner-identity";
+import { useOwnerApplications, useWalletVerified } from "@/lib/chain/use-owner";
+import { explainListingError, proveListing, roomTag } from "@/lib/chain/prove-listing";
+
+import { useWallet } from "@/components/providers";
 import { VerifyBadge } from "@/components/ui/verify-badge";
 import { WorldIdButton } from "@/components/ui/world-id-button";
-import {
-  connectArkivWallet,
-  createRoomListing,
-  type ArkivWalletClient,
-} from "@/lib/arkiv";
-import {
-  fetchApprovedPropertyApplication,
-  type PropertyApplicationRecord,
-} from "@/lib/property-applications";
-import {
-  formatDate,
-  formatUsdc,
-  rooms,
-  siteHost,
-} from "@/lib/data";
+import { formatDate, formatUsdc } from "@/lib/data";
 
-type Phase = "idle" | "connecting" | "issuing" | "issued";
+type Phase = "idle" | "issuing" | "issued";
 
-const retentionForEndDate = (date: string) =>
-  Math.max(
-    1,
-    Math.ceil(
-      (new Date(`${date}T23:59:59.999Z`).getTime() - Date.now()) /
-        (24 * 60 * 60 * 1000),
-    ),
-  );
+interface PublishedRoom {
+  listingId?: string;
+  token?: string;
+  transactionHash?: string;
+  indexed?: boolean;
+  name: string;
+  price: string;
+}
 
-const overlapsActive = (start: string, end: string) =>
-  new Date(start) <= new Date("2027-03-31") &&
-  new Date(end) >= new Date("2027-01-01");
+const DAY_MS = 86_400_000;
+const isoDate = (ms: number) => new Date(ms).toISOString().slice(0, 10);
 
 export function ListingForm() {
-  const [wallet, setWallet] = useState<ArkivWalletClient | null>(null);
-  const [walletAddress, setWalletAddress] = useState<string | null>(null);
-  const [approvedApplication, setApprovedApplication] =
-    useState<PropertyApplicationRecord | null>(null);
-  const [verified, setVerified] = useState(false);
-  const [selected, setSelected] = useState<Record<string, boolean>>({
-    r1: true,
-    r2: true,
-    r3: true,
-  });
-  const [prices, setPrices] = useState<Record<string, string>>({
-    r1: "850",
-    r2: "980",
-    r3: "820",
-  });
-  const [start, setStart] = useState("2027-04-01");
-  const [end, setEnd] = useState("2027-06-30");
-  const [retentionDays, setRetentionDays] = useState(() =>
-    retentionForEndDate("2027-06-30"),
-  );
-  const [retentionTouched, setRetentionTouched] = useState(false);
-  const [phase, setPhase] = useState<Phase>("idle");
-  const [walletError, setWalletError] = useState("");
-  const [writeError, setWriteError] = useState("");
-  const [createdRecords, setCreatedRecords] = useState<
-    { roomId: string; entityKey: string; txHash: string }[]
-  >([]);
+  const { connected, connect, address } = useWallet();
+  const { verified, confirm: setVerified } = useWalletVerified(address);
+  const { applications, state: applicationsState, hasIdentity } = useOwnerApplications();
+  const approved = applications.filter((app) => app.status === "approved");
+  const [applicationId, setApplicationId] = useState<string | null>(null);
+  const application =
+    approved.find((app) => app.applicationId === applicationId) ?? approved[0];
 
-  const availableRooms = approvedApplication
-    ? rooms.slice(0, Math.min(approvedApplication.roomCount, rooms.length))
-    : [];
-  const chosen = availableRooms.filter((room) => selected[room.id]);
-  const overlap = overlapsActive(start, end) && chosen.length > 0;
+  const [selected, setSelected] = useState<Record<string, boolean>>({ "room-1": true });
+  const [prices, setPrices] = useState<Record<string, string>>({});
+  const [start, setStart] = useState(() => isoDate(Date.now() + DAY_MS));
+  const [end, setEnd] = useState(() => isoDate(Date.now() + 91 * DAY_MS));
+  const [phase, setPhase] = useState<Phase>("idle");
+  const [listingError, setListingError] = useState<string | null>(null);
+  const [progress, setProgress] = useState<string | null>(null);
+  const [published, setPublished] = useState<PublishedRoom[]>([]);
+
+  const rooms = Array.from({ length: application?.rooms ?? 0 }, (_, index) => ({
+    id: `room-${index + 1}`,
+    name: `Room ${index + 1}`,
+  }));
+  const chosen = rooms.filter((room) => selected[room.id]);
   const invalidDates = new Date(end) <= new Date(start);
-  const minimumRetentionDays = retentionForEndDate(end);
-  const invalidRetention =
-    !Number.isInteger(retentionDays) ||
-    retentionDays < minimumRetentionDays ||
-    retentionDays > 36500;
   const total = chosen.reduce(
     (sum, room) => sum + Number(prices[room.id] || 0),
     0,
   );
   const ready =
-    Boolean(wallet && walletAddress) &&
-    Boolean(approvedApplication) &&
+    connected &&
     verified &&
+    Boolean(application) &&
     chosen.length > 0 &&
-    !overlap &&
     !invalidDates &&
-    !invalidRetention &&
     chosen.every((room) => Number(prices[room.id]) > 0);
 
   const dateLabel = useMemo(() => {
@@ -98,77 +69,86 @@ export function ListingForm() {
     }
   }, [end, start]);
 
-  const connectWallet = async () => {
-    setPhase("connecting");
-    setWalletError("");
-    setWriteError("");
-    try {
-      const connectedWallet = await connectArkivWallet();
-      setWallet(connectedWallet.walletClient);
-      setWalletAddress(connectedWallet.account);
-      const approved = await fetchApprovedPropertyApplication(connectedWallet.account);
-      setApprovedApplication(approved);
-      setSelected(
-        Object.fromEntries(
-          rooms.map((room, index) => [room.id, index < (approved?.roomCount ?? 0)]),
-        ),
-      );
-      if (!approved) {
-        setWriteError("No registrar-approved Arkiv property was found for this wallet.");
-      }
-    } catch (error) {
-      setWalletError(
-        error instanceof Error ? error.message : "Could not connect to Arkiv.",
-      );
-    } finally {
-      setPhase("idle");
-    }
-  };
-
+  /**
+   * Publishes the chosen rooms as on-chain listings.
+   *
+   * The membership proof is generated here, in the owner's browser, so the identity
+   * secret never reaches the server. The first proof downloads Semaphore's artifacts
+   * and can take a while, which is why the button reports what it is doing.
+   */
   const issue = async (event: React.FormEvent) => {
     event.preventDefault();
     if (!ready) return;
-    setPhase("issuing");
-    setWriteError("");
 
-    const records: typeof createdRecords = [...createdRecords];
+    const identity = readIdentity();
+    if (!identity || !application) {
+      setListingError(
+        "This device has no approved owner identity. Submit a property application first.",
+      );
+      return;
+    }
+
+    setPhase("issuing");
+    setListingError(null);
+    setProgress("Building the membership proof — this can take a moment…");
+    const done: PublishedRoom[] = [];
+
     try {
       for (const room of chosen) {
-        if (records.some((record) => record.roomId === room.id)) continue;
-        const { entityKey, txHash } = await createRoomListing(
-          wallet!,
-          {
-            listingId: `${approvedApplication!.key}:${room.id}`,
-            propertyId: approvedApplication!.key,
-            owner: addr(walletAddress as `0x${string}`),
-            roomId: room.id,
-            propertyName: approvedApplication!.propertyName,
-            roomName: `Room ${availableRooms.findIndex((entry) => entry.id === room.id) + 1}`,
-            description: "",
-            locality: approvedApplication!.locality,
-            city: approvedApplication!.city,
-            price: dec(prices[room.id]),
-            currency: "USDC",
-            startAt: u64(
-              BigInt(Math.floor(new Date(`${start}T00:00:00.000Z`).getTime() / 1000)),
-            ),
-            endAt: u64(
-              BigInt(Math.floor(new Date(`${end}T23:59:59.999Z`).getTime() / 1000)),
-            ),
-            status: "available",
-          },
-          retentionDays,
-        );
-        records.push({ roomId: room.id, entityKey, txHash });
-        setCreatedRecords([...records]);
+        const terms = {
+          // Scoped to the application, so each room can be listed once per approval.
+          room: roomTag(identity.seed, `${application.applicationId}:${room.id}`),
+          start: BigInt(Math.floor(new Date(start).getTime() / 1000)),
+          end: BigInt(Math.floor(new Date(end).getTime() / 1000)),
+          price: BigInt(Math.round(Number(prices[room.id]) * 1e6)),
+          payout: address as `0x${string}`,
+        };
+
+        setProgress(`Proving approval for ${room.name}…`);
+        const proof = await proveListing(terms);
+
+        setProgress(`Issuing the ATS token for ${room.name} on Hedera…`);
+        const res = await fetch("/api/listings", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            proof,
+            start: Number(terms.start),
+            end: Number(terms.end),
+            price: terms.price.toString(),
+            payout: terms.payout,
+            // Public on Arkiv. The city makes a room searchable; the locality stays private.
+            city: application.city,
+            label: `${room.name} · ${application.city}`,
+          }),
+        });
+        const data = (await res.json()) as {
+          ok?: boolean; error?: string; transactionHash?: string;
+          listingId?: string; token?: string; indexed?: boolean;
+        };
+        if (!res.ok || !data.ok) throw new Error(data.error ?? "listing_failed");
+        done.push({
+          listingId: data.listingId,
+          token: data.token,
+          transactionHash: data.transactionHash,
+          indexed: data.indexed,
+          name: room.name,
+          price: prices[room.id],
+        });
       }
+
+      setPublished(done);
       setPhase("issued");
-    } catch (error) {
-      setWriteError(
-        `${error instanceof Error ? error.message : "Arkiv write failed."}${records.length ? ` ${records.length} of ${chosen.length} listing(s) were created; see their entity keys below.` : ""}`,
+    } catch (err) {
+      // Rooms published before the failure are on-chain, so they must still be shown.
+      setPublished(done);
+      setListingError(
+        `${explainListingError(err)}${done.length ? ` ${done.length} room(s) were already published.` : ""}`,
       );
+      if (done.length) setPhase("issued");
+      else setPhase("idle");
     } finally {
-      setPhase((current) => (current === "issued" ? current : "idle"));
+      setProgress(null);
     }
   };
 
@@ -182,69 +162,75 @@ export function ListingForm() {
               <span className="badge__check" aria-hidden="true">
                 ✓
               </span>
-              Written to Arkiv Rabdi
+              Issued on Hedera
             </span>
           </div>
           <div className="panel__body">
+            {listingError && (
+              <p className="micro" style={{ color: "crimson", marginBottom: 12 }}>
+                ● {listingError}
+              </p>
+            )}
             <div className="notice notice--verified">
               <span className="notice__icon" aria-hidden="true">
                 ✓
               </span>
               <div>
                 <strong>
-                  {createdRecords.length} of {chosen.length} Arkiv listing
-                  {chosen.length === 1 ? "" : "s"} created · {dateLabel}
+                  {published.length} room {published.length === 1 ? "token" : "tokens"} issued · {dateLabel}
                 </strong>
                 <p>
-                  Each public-safe room record will remain queryable for {retentionDays}{" "}
-                  days, then expire from Arkiv queries. Hedera token issuance is a
-                  separate step and is not performed by this form yet.
+                  Each room has its own supply-1 ATS token. Its Arkiv listing is searchable
+                  now and expires with the rental period.
                 </p>
               </div>
             </div>
 
-            <div className="detail-meta" style={{ marginTop: 22 }}>
-              <div>
-                <span className="micro">Total one-time value</span>
-                <strong>{formatUsdc(total)} USDC</strong>
-              </div>
-              <div>
-                <span className="micro">Arkiv entities</span>
-                <strong>{createdRecords.length}</strong>
-              </div>
-              <div>
-                <span className="micro">Connected owner</span>
-                <strong className="mono" style={{ fontSize: 10 }}>
-                  {walletAddress?.slice(0, 6)}…{walletAddress?.slice(-4)}
-                </strong>
-              </div>
-              <div>
-                <span className="micro">Database lifetime</span>
-                <strong>{retentionDays} days on Arkiv</strong>
-              </div>
-            </div>
-
             <div className="stack-16" style={{ marginTop: 22 }}>
-              {chosen.map((room) => (
-                <div className="between panel panel--pad" key={room.id}>
+              {published.map((room) => (
+                <div className="between panel panel--pad" key={room.listingId ?? room.name}>
                   <div>
                     <strong>{room.name}</strong>
                     <p className="small dim" style={{ marginTop: 4 }}>
-                      {formatUsdc(Number(prices[room.id]))} USDC · {dateLabel}
+                      {formatUsdc(Number(room.price))} USDC · {dateLabel}
                     </p>
-                    <p className="mono" style={{ marginTop: 6, fontSize: 9 }}>
-                      Entity {createdRecords.find((record) => record.roomId === room.id)?.entityKey ?? "pending"}
-                      {" · "}
-                      Tx {createdRecords.find((record) => record.roomId === room.id)?.txHash ?? "pending"}
-                    </p>
+                    {room.indexed === false && (
+                      <p className="micro" style={{ color: "crimson", marginTop: 4 }}>
+                        ● On Hedera, but not indexed on Arkiv, so it may not appear in search.
+                      </p>
+                    )}
+                    {room.token && (
+                      <a
+                        href={`https://hashscan.io/testnet/contract/${room.token}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="mono micro"
+                        style={{ display: "block", marginTop: 4 }}
+                      >
+                        ATS token {room.token.slice(0, 10)}…
+                      </a>
+                    )}
+                    {room.transactionHash && (
+                      <a
+                        href={`https://hashscan.io/testnet/transaction/${room.transactionHash}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="mono micro"
+                        style={{ display: "block", marginTop: 2 }}
+                      >
+                        Transaction {room.transactionHash.slice(0, 10)}…
+                      </a>
+                    )}
                   </div>
+                  {room.listingId && (
                     <Link
-                    href={`/marketplace/${room.id}`}
-                    className="text-link"
-                    style={{ fontSize: 11.5 }}
-                  >
-                    Public listing
-                  </Link>
+                      href={`/marketplace/${room.listingId}`}
+                      className="text-link"
+                      style={{ fontSize: 11.5 }}
+                    >
+                      Public listing
+                    </Link>
+                  )}
                 </div>
               ))}
             </div>
@@ -253,23 +239,12 @@ export function ListingForm() {
               <Link href="/owner" className="btn">
                 Back to dashboard
               </Link>
-              <Link href="/verify/rmo-3b-andheri?room=r2" className="btn btn--ghost">
-                Open verification page
+              <Link href="/marketplace" className="btn btn--ghost">
+                Browse rooms
               </Link>
             </div>
           </div>
         </section>
-
-        <aside className="panel panel--pad">
-          <p className="eyebrow">QR + verification</p>
-          <p className="small" style={{ marginTop: 10, color: "rgba(22,35,59,.68)" }}>
-            Every room gets a public link. Property approval and the rental-right
-            token still need Hedera confirmation; this form does not perform that mint.
-          </p>
-          <p className="mono" style={{ marginTop: 14, fontSize: 10.5, wordBreak: "break-all" }}>
-            {siteHost}/verify/rmo-3b-andheri?room=r2
-          </p>
-        </aside>
       </div>
     );
   }
@@ -281,24 +256,65 @@ export function ListingForm() {
           <section className="panel">
             <div className="panel__head">
               <h2>Property and period</h2>
-              <span className="badge badge--verified">
-                <span className="badge__check" aria-hidden="true">
-                  ✓
+              {application ? (
+                <span className="badge badge--verified">
+                  <span className="badge__check" aria-hidden="true">
+                    ✓
+                  </span>
+                  Approved
                 </span>
-                Approved
-              </span>
+              ) : (
+                <span className="badge badge--quiet">Not approved</span>
+              )}
             </div>
             <div className="panel__body">
+              {!application && (
+                <div className="notice notice--brass" style={{ marginBottom: 16 }}>
+                  <span className="notice__icon" aria-hidden="true">
+                    !
+                  </span>
+                  <div>
+                    <strong>
+                      {applicationsState === "loading"
+                        ? "Checking your approval…"
+                        : applicationsState === "unavailable"
+                          ? "Your applications could not be read from Arkiv."
+                          : !hasIdentity || applications.length === 0
+                            ? "This device has no property application."
+                            : applications.some((app) => app.status === "pending")
+                              ? "Your property is waiting for the registrar."
+                              : "Your application was not approved."}
+                    </strong>
+                    {applicationsState === "ready" && (
+                      <p>
+                        Rooms can be listed once the registrar approves a property.{" "}
+                        <Link href="/owner/new" className="text-link">
+                          Submit a property
+                        </Link>
+                      </p>
+                    )}
+                  </div>
+                </div>
+              )}
               <div className="form-grid">
                 <div className="field field--wide">
                   <label htmlFor="property">Approved property</label>
-                  <input
+                  <select
                     id="property"
-                    value={approvedApplication ? `${approvedApplication.propertyName} · ${approvedApplication.locality}` : "Connect the owner wallet to check approval"}
-                    readOnly
-                  />
+                    value={application?.applicationId ?? ""}
+                    disabled={!application}
+                    onChange={(event) => setApplicationId(event.target.value)}
+                  >
+                    {approved.length === 0 && <option value="">None yet</option>}
+                    {approved.map((app) => (
+                      <option key={app.applicationId} value={app.applicationId}>
+                        {app.nickname} · {app.locality}
+                      </option>
+                    ))}
+                  </select>
                   <span className="field__hint">
-                    Only an Arkiv application with an allowlisted registrar approval can be listed.
+                    Only registrar-approved properties appear here. The contract also
+                    rejects a listing without a valid approval proof.
                   </span>
                 </div>
                 <div className="field">
@@ -316,54 +332,11 @@ export function ListingForm() {
                     id="end"
                     type="date"
                     value={end}
-                    onChange={(event) => {
-                      setEnd(event.target.value);
-                      if (!retentionTouched) {
-                        setRetentionDays(retentionForEndDate(event.target.value));
-                      }
-                    }}
+                    onChange={(event) => setEnd(event.target.value)}
                   />
-                </div>
-                <div className="field field--wide">
-                  <label htmlFor="retention-days">Keep public Arkiv listing for</label>
-                  <div className="between wrap">
-                    <input
-                      id="retention-days"
-                      type="number"
-                      min={minimumRetentionDays}
-                      max="36500"
-                      step="1"
-                      value={retentionDays}
-                      onChange={(event) => {
-                        setRetentionTouched(true);
-                        setRetentionDays(Number(event.target.value));
-                      }}
-                    />
-                    <span className="small dim">days from the write transaction</span>
-                  </div>
-                  <span className="field__hint">
-                    Must cover the full rental period. Minimum for these dates: {minimumRetentionDays} days.
-                    Arkiv removes expired records from queries; never put deeds, exact addresses, tenant
-                    identity, Swarm keys, or ZK witnesses in this public record.
-                  </span>
                 </div>
               </div>
 
-              {overlap && (
-                <div className="notice notice--alert" style={{ marginTop: 16 }}>
-                  <span className="notice__icon" aria-hidden="true">
-                    !
-                  </span>
-                  <div>
-                    <strong>Rooms already listed for part of this period.</strong>
-                    <p>
-                      Room 2 is sold for Jan – Mar 2027 and the other rooms have
-                      an active listing. Pick a non-overlapping period, such as
-                      1 Apr – 30 Jun 2027.
-                    </p>
-                  </div>
-                </div>
-              )}
               {invalidDates && (
                 <div className="notice notice--alert" style={{ marginTop: 16 }}>
                   <span className="notice__icon" aria-hidden="true">
@@ -372,18 +345,6 @@ export function ListingForm() {
                   <div>
                     <strong>The end date must be after the start date.</strong>
                     <p>The registry rejects zero-length and reversed periods.</p>
-                  </div>
-                </div>
-              )}
-              {invalidRetention && (
-                <div className="notice notice--alert" style={{ marginTop: 16 }}>
-                  <span className="notice__icon" aria-hidden="true">!</span>
-                  <div>
-                    <strong>Choose a valid Arkiv retention period.</strong>
-                    <p>
-                      Enter a whole number from {minimumRetentionDays} to 36500 days so the listing
-                      remains searchable through the rental end date.
-                    </p>
                   </div>
                 </div>
               )}
@@ -397,7 +358,10 @@ export function ListingForm() {
             </div>
             <div className="panel__body">
               <div className="stack-16">
-                {rooms.map((room, index) => (
+                {rooms.length === 0 && (
+                  <p className="small dim">Rooms appear once a property is approved.</p>
+                )}
+                {rooms.map((room) => (
                   <div
                     className="between wrap"
                     key={room.id}
@@ -410,7 +374,6 @@ export function ListingForm() {
                       <input
                         type="checkbox"
                         checked={Boolean(selected[room.id])}
-                        disabled={index >= (approvedApplication?.roomCount ?? 0)}
                         onChange={(event) =>
                           setSelected({
                             ...selected,
@@ -418,7 +381,7 @@ export function ListingForm() {
                           })
                         }
                       />
-                      Room {index + 1} · {room.name.split("·")[1]?.trim()}
+                      {room.name}
                     </label>
                     <div className="field" style={{ width: 150 }}>
                       <label htmlFor={`price-${room.id}`}>Price · USDC</label>
@@ -426,7 +389,7 @@ export function ListingForm() {
                         id={`price-${room.id}`}
                         type="number"
                         min="1"
-                        value={prices[room.id]}
+                        value={prices[room.id] ?? ""}
                         onChange={(event) =>
                           setPrices({ ...prices, [room.id]: event.target.value })
                         }
@@ -442,27 +405,25 @@ export function ListingForm() {
           <section className="panel">
             <div className="panel__head">
               <h2>Confirm issuance</h2>
-              <span className="badge badge--quiet">Arkiv Rabdi wallet required</span>
+              <span className="badge badge--quiet">One ATS token per room</span>
             </div>
             <div className="panel__body">
-              {!wallet ? (
+              {!connected ? (
                 <div className="notice notice--brass">
                   <span className="notice__icon" aria-hidden="true">
                     1
                   </span>
                   <div style={{ flex: 1 }}>
                     <strong>Connect the owner wallet.</strong>
-                    <p>The owner wallet signs the Arkiv entity writes on Rabdi.</p>
+                    <p>Sale payments go to this wallet.</p>
                     <button
                       type="button"
                       className="btn btn--small"
                       style={{ marginTop: 12 }}
-                      onClick={() => void connectWallet()}
-                      disabled={phase === "connecting"}
+                      onClick={() => void connect()}
                     >
-                      {phase === "connecting" ? "Connecting…" : "Connect Rabdi wallet"}
+                      Connect wallet
                     </button>
-                    {walletError && <p className="small" role="alert" style={{ marginTop: 10 }}>{walletError}</p>}
                   </div>
                 </div>
               ) : !verified ? (
@@ -472,15 +433,12 @@ export function ListingForm() {
                   </span>
                   <div style={{ flex: 1 }}>
                     <strong>Verify the owner identity.</strong>
-                    <p>
-                      The demo owner verification gate is required before listing.
-                      Hedera allowlist and token issuance still need contract integration.
-                    </p>
+                    <p>Verify a unique person with World ID before listing a room.</p>
                     <div style={{ marginTop: 12 }}>
                       <WorldIdButton
                         action="owner-verify"
                         label="Verify with World ID"
-                        onVerified={() => setVerified(true)}
+                        onVerified={setVerified}
                       />
                     </div>
                   </div>
@@ -491,10 +449,10 @@ export function ListingForm() {
                     ✓
                   </span>
                   <div>
-                    <strong>Owner verified and allowlisted.</strong>
+                    <strong>Owner verified.</strong>
                     <p>
-                      Each selected room will be written as a public-safe Arkiv entity.
-                      This demo verification badge does not submit a Hedera token mint.
+                      Each selected room gets its own ATS token on Hedera, then a
+                      searchable listing on Arkiv.
                     </p>
                   </div>
                 </div>
@@ -502,38 +460,46 @@ export function ListingForm() {
 
               <div className="form-actions">
                 <div>
+                  {progress && (
+                    <p className="micro dim" style={{ marginBottom: 8 }}>
+                      {progress}
+                    </p>
+                  )}
+                  {listingError && (
+                    <p
+                      className="micro"
+                      style={{ color: "crimson", marginBottom: 8 }}
+                    >
+                      ● {listingError}
+                    </p>
+                  )}
                   <button
                     type="submit"
                     className="btn"
                     disabled={!ready || phase === "issuing"}
                   >
                     {phase === "issuing"
-                      ? `Writing ${createdRecords.length + 1} of ${chosen.length}…`
-                      : `Create ${chosen.length} Arkiv ${chosen.length === 1 ? "listing" : "listings"}`}
+                      ? (progress ?? "Publishing…")
+                      : `Issue ${chosen.length} room ${chosen.length === 1 ? "token" : "tokens"}`}
                   </button>
-                  {writeError && <p className="small" role="alert" style={{ marginTop: 10 }}>{writeError}</p>}
                   {!ready && phase === "idle" && (
                     <p className="form-lock" style={{ marginTop: 10 }}>
                       <span aria-hidden="true">●</span>
-                      {!wallet
-                        ? "Connect a wallet on Arkiv Rabdi to continue."
-                        : !approvedApplication
-                          ? "Submit a property and wait for registrar approval before listing."
+                      {!connected
+                        ? "Connect a wallet to continue."
                         : !verified
                           ? "Verify your identity to issue tokens."
-                          : chosen.length === 0
-                            ? "Select at least one room."
-                            : overlap
-                              ? "Choose a non-overlapping period."
-                              : invalidRetention
-                                ? "Set a valid Arkiv retention period."
-                                : "Complete the price and date fields."}
+                          : !application
+                            ? "A registrar-approved property is required."
+                            : chosen.length === 0
+                              ? "Select at least one room."
+                              : "Complete the price and date fields."}
                     </p>
                   )}
                 </div>
                 <p className="form-actions__note">
-                  Confirmation appears after each Arkiv transaction is included. Each room is a
-                  separate write; if one fails, successful entity keys remain visible above.
+                  Each room is confirmed only after its Hedera transaction succeeds.
+                  Listing several rooms sends one transaction per room.
                 </p>
               </div>
             </div>
@@ -544,7 +510,7 @@ export function ListingForm() {
           <section className="panel panel--pad">
             <p className="eyebrow">Preview</p>
             <h2 className="subtitle" style={{ marginTop: 10 }}>
-              {approvedApplication?.propertyName ?? "No approved property"}
+              {application?.nickname ?? "No approved property"}
             </h2>
             <p className="small dim" style={{ marginTop: 4 }}>
               {dateLabel}
@@ -553,7 +519,7 @@ export function ListingForm() {
             <div className="buy-panel__list" style={{ marginTop: 16 }}>
               {chosen.map((room) => (
                 <div key={room.id}>
-                  <span>Room {rooms.findIndex((entry) => entry.id === room.id) + 1}</span>
+                  <span>{room.name}</span>
                   <span className="mono">
                     {formatUsdc(Number(prices[room.id] || 0))} USDC
                   </span>
@@ -576,25 +542,25 @@ export function ListingForm() {
           <section className="panel panel--pad">
             <p className="eyebrow">Contract checks</p>
             <div className="timeline" style={{ marginTop: 12 }}>
-              <div className="timeline__item" data-done="true">
+              <div className="timeline__item" data-done={Boolean(application)}>
                 <span className="timeline__dot" />
                 <div>
                   <strong>Property approved</strong>
-                  <span>{approvedApplication ? "Registrar approval found on Arkiv" : "Registrar approval required"}</span>
+                  <span>Registrar-approved commitment on Hedera</span>
                 </div>
               </div>
-              <div className="timeline__item" data-done={!overlap}>
+              <div className="timeline__item" data-done={verified}>
                 <span className="timeline__dot" />
                 <div>
-                  <strong>No overlap</strong>
-                  <span>Same room cannot have two active periods</span>
+                  <strong>Owner verified</strong>
+                  <span>One person, one wallet, via World ID</span>
                 </div>
               </div>
-              <div className="timeline__item" data-done={Boolean(ready)}>
+              <div className="timeline__item" data-done={!invalidDates}>
                 <span className="timeline__dot" />
                 <div>
-                  <strong>Owner allowlisted</strong>
-                  <span>Hedera allowlist check is not connected to this form yet</span>
+                  <strong>Valid period</strong>
+                  <span>The end date must follow the start date</span>
                 </div>
               </div>
             </div>

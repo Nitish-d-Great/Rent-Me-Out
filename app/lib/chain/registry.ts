@@ -60,6 +60,13 @@ export interface RoomRecord {
   roomTag: string;
   /** The room's own ATS security token, issued when it was listed. */
   token: `0x${string}`;
+  /** The owner's wallet, which the sale pays. */
+  payout: `0x${string}`;
+  /** From the Arkiv index, when the room has been indexed. */
+  city?: string;
+  label?: string;
+  purchaseTx?: string;
+  arkivKey?: string;
 }
 
 export function registryAddress(): `0x${string}` {
@@ -75,23 +82,26 @@ export function publicClient() {
 const ZERO = "0x0000000000000000000000000000000000000000";
 
 /**
- * A listing's token never changes once issued, so one read is enough for the life of the
- * process. Without this, every room on a page would pay one more RPC call on each load.
+ * A listing's token and payout never change, so one read is enough for the life of the
+ * process. Without this, every room on a page would pay extra RPC calls on each load.
  */
-const tokenCache = new Map<string, `0x${string}`>();
+const fixedFactsCache = new Map<string, { token: `0x${string}`; payout: `0x${string}` }>();
 
-async function readTokenOf(
-  registry: `0x${string}`,
-  listingId: bigint,
-): Promise<`0x${string}`> {
+async function readFixedFacts(registry: `0x${string}`, listingId: bigint) {
   const key = `${registry}:${listingId}`;
-  const cached = tokenCache.get(key);
+  const cached = fixedFactsCache.get(key);
   if (cached) return cached;
-  const token = await publicClient().readContract({
-    address: registry, abi: REGISTRY_ABI, functionName: "tokenOf", args: [listingId],
-  });
-  tokenCache.set(key, token);
-  return token;
+  const [token, listing] = await Promise.all([
+    publicClient().readContract({
+      address: registry, abi: REGISTRY_ABI, functionName: "tokenOf", args: [listingId],
+    }),
+    publicClient().readContract({
+      address: registry, abi: REGISTRY_ABI, functionName: "getListing", args: [listingId],
+    }),
+  ]);
+  const facts = { token, payout: listing[0] };
+  fixedFactsCache.set(key, facts);
+  return facts;
 }
 
 /**
@@ -106,7 +116,7 @@ export async function readRoom(listingId: bigint): Promise<RoomRecord | null> {
   try {
     // Both reads go out together: done in sequence this costs two round trips per
     // room, which multiplies across a page that lists several.
-    const [room, identity, token] = await Promise.all([
+    const [room, identity, facts] = await Promise.all([
       publicClient().readContract({
         address, abi: REGISTRY_ABI, functionName: "verifyRoom", args: [listingId],
       }),
@@ -116,7 +126,7 @@ export async function readRoom(listingId: bigint): Promise<RoomRecord | null> {
         })
         // Optional: an unsold room has no identity bound.
         .catch(() => 0n),
-      readTokenOf(address, listingId),
+      readFixedFacts(address, listingId),
     ]);
 
     const [state, valid, holder, start, end, price, roomTag] = room;
@@ -133,7 +143,8 @@ export async function readRoom(listingId: bigint): Promise<RoomRecord | null> {
       priceRaw: price.toString(),
       price: (Number(price) / 1e6).toFixed(2),
       roomTag: roomTag.toString(),
-      token,
+      token: facts.token,
+      payout: facts.payout,
     };
   } catch {
     return null;
