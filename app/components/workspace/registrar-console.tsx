@@ -49,6 +49,8 @@ export function RegistrarConsole() {
   const { rooms: liveRooms, status: liveStatus } = useLiveRooms();
   const rooms = liveRooms ?? sampleRooms;
   const [freezeTx, setFreezeTx] = useState<string | null>(null);
+  const [decisionTx, setDecisionTx] = useState<string | null>(null);
+  const [decisionError, setDecisionError] = useState<string | null>(null);
   const [freezeError, setFreezeError] = useState<string | null>(null);
   const [freezing, setFreezing] = useState<string | null>(null);
 
@@ -92,11 +94,42 @@ export function RegistrarConsole() {
     ]);
   };
 
-  const decide = (decision: "approved" | "rejected") => {
+  /**
+   * The registrar's decision, written to Hedera.
+   *
+   * Approving admits the owner's Semaphore commitment to the approved set, which is
+   * what later lets them prove a property is approved without revealing which one.
+   * Local state only changes once the transaction has actually succeeded.
+   */
+  const decide = async (decision: "approved" | "rejected") => {
     if (!selected || selected.status !== "pending") return;
     if (decision === "rejected" && !rejection.trim()) return;
+
     setProcessing(decision === "approved" ? "approve" : "reject");
-    window.setTimeout(() => {
+    setDecisionError(null);
+    setDecisionTx(null);
+    try {
+      const res = await fetch("/api/properties", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          action: decision === "approved" ? "approve" : "reject",
+          applicationId: selected.id,
+          reason: decision === "rejected" ? rejection.trim() : undefined,
+        }),
+      });
+      const data = (await res.json()) as {
+        ok?: boolean; error?: string; transactionHash?: string;
+      };
+      if (!res.ok || !data.ok) {
+        setDecisionError(
+          data.error === "commitment_required"
+            ? "This application has no owner commitment on file, so there is nothing to admit to the approved set."
+            : (data.error ?? "decision_failed"),
+        );
+        return;
+      }
+
       setApps((current) =>
         current.map((app) =>
           app.id === selected.id
@@ -109,14 +142,18 @@ export function RegistrarConsole() {
             : app,
         ),
       );
+      setDecisionTx(data.transactionHash ?? null);
       pushAudit(
         decision === "approved" ? "Property approved" : "Property rejected",
         `${selected.id} · ${selected.nickname}`,
         decision === "rejected" ? rejection.trim() : "Deed verified",
       );
-      setProcessing(null);
       setRejection("");
-    }, 1300);
+    } catch {
+      setDecisionError("network_error");
+    } finally {
+      setProcessing(null);
+    }
   };
 
   const pending = apps.filter((app) => app.status === "pending").length;
@@ -309,6 +346,30 @@ export function RegistrarConsole() {
               {selected.status === "pending" ? (
                 <div style={{ marginTop: 18 }}>
                   <div className="field">
+                    {(decisionTx || decisionError) && (
+                      <p className="micro" style={{ marginBottom: 10 }}>
+                        {decisionTx ? (
+                          <>
+                            <span style={{ color: "green" }}>
+                              ● Recorded on Hedera testnet
+                            </span>{" "}
+                            —{" "}
+                            <a
+                              href={`https://hashscan.io/testnet/transaction/${decisionTx}`}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="mono"
+                            >
+                              {decisionTx.slice(0, 18)}…
+                            </a>
+                          </>
+                        ) : (
+                          <span style={{ color: "crimson" }}>
+                            ● {decisionError} — nothing changed on-chain.
+                          </span>
+                        )}
+                      </p>
+                    )}
                     <label htmlFor="rejection">
                       Rejection reason · required to reject
                     </label>
@@ -323,7 +384,7 @@ export function RegistrarConsole() {
                     <button
                       type="button"
                       className="btn btn--verified btn--small"
-                      onClick={() => decide("approved")}
+                      onClick={() => void decide("approved")}
                       disabled={processing !== null}
                     >
                       {processing === "approve"
@@ -333,7 +394,7 @@ export function RegistrarConsole() {
                     <button
                       type="button"
                       className="btn btn--alert btn--small"
-                      onClick={() => decide("rejected")}
+                      onClick={() => void decide("rejected")}
                       disabled={!rejection.trim() || processing !== null}
                     >
                       {processing === "reject"

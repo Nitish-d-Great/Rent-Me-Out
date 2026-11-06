@@ -2,6 +2,11 @@
 
 import Link from "next/link";
 import { useMemo, useState } from "react";
+import { readIdentity } from "@/lib/chain/owner-identity";
+import { explainListingError, proveListing, roomTag } from "@/lib/chain/prove-listing";
+
+/** Used only if no wallet is connected; the payout address must still be well-formed. */
+const ZERO_PAYOUT = "0x000000000000000000000000000000000000dEaD";
 import { useWallet } from "@/components/providers";
 import { VerifyBadge } from "@/components/ui/verify-badge";
 import { WorldIdButton } from "@/components/ui/world-id-button";
@@ -20,7 +25,7 @@ const overlapsActive = (start: string, end: string) =>
   new Date(end) >= new Date("2027-01-01");
 
 export function ListingForm() {
-  const { connected, connect } = useWallet();
+  const { connected, connect, address } = useWallet();
   const [verified, setVerified] = useState(false);
   const [selected, setSelected] = useState<Record<string, boolean>>({
     r1: true,
@@ -35,6 +40,9 @@ export function ListingForm() {
   const [start, setStart] = useState("2027-04-01");
   const [end, setEnd] = useState("2027-06-30");
   const [phase, setPhase] = useState<Phase>("idle");
+  const [listingError, setListingError] = useState<string | null>(null);
+  const [progress, setProgress] = useState<string | null>(null);
+  const [txHashes, setTxHashes] = useState<string[]>([]);
 
   const chosen = rooms.filter((room) => selected[room.id]);
   const overlap = overlapsActive(start, end) && chosen.length > 0;
@@ -59,11 +67,68 @@ export function ListingForm() {
     }
   }, [end, start]);
 
-  const issue = (event: React.FormEvent) => {
+  /**
+   * Publishes the chosen rooms as on-chain listings.
+   *
+   * The membership proof is generated here, in the owner's browser, so the identity
+   * secret never reaches the server. The first proof downloads Semaphore's artifacts
+   * and can take a while, which is why the button reports what it is doing.
+   */
+  const issue = async (event: React.FormEvent) => {
     event.preventDefault();
     if (!ready) return;
+
+    const identity = readIdentity();
+    if (!identity) {
+      setListingError(
+        "This device has no owner identity. Submit a property application first.",
+      );
+      return;
+    }
+
     setPhase("issuing");
-    window.setTimeout(() => setPhase("issued"), 1800);
+    setListingError(null);
+    setProgress("Building the membership proof — this can take a moment…");
+    const published: string[] = [];
+
+    try {
+      for (const room of chosen) {
+        const terms = {
+          room: roomTag(identity.seed, room.id),
+          start: BigInt(Math.floor(new Date(start).getTime() / 1000)),
+          end: BigInt(Math.floor(new Date(end).getTime() / 1000)),
+          price: BigInt(Math.round(Number(prices[room.id]) * 1e6)),
+          payout: (address ?? ZERO_PAYOUT) as `0x${string}`,
+        };
+
+        setProgress(`Proving approval for ${room.name}…`);
+        const proof = await proveListing(terms);
+
+        setProgress(`Publishing ${room.name} to Hedera…`);
+        const res = await fetch("/api/listings", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            proof,
+            start: Number(terms.start),
+            end: Number(terms.end),
+            price: terms.price.toString(),
+            payout: terms.payout,
+          }),
+        });
+        const data = (await res.json()) as { ok?: boolean; error?: string; transactionHash?: string };
+        if (!res.ok || !data.ok) throw new Error(data.error ?? "listing_failed");
+        if (data.transactionHash) published.push(data.transactionHash);
+      }
+
+      setTxHashes(published);
+      setPhase("issued");
+    } catch (err) {
+      setListingError(explainListingError(err));
+      setPhase("idle");
+    } finally {
+      setProgress(null);
+    }
   };
 
   if (phase === "issued") {
@@ -80,6 +145,22 @@ export function ListingForm() {
             </span>
           </div>
           <div className="panel__body">
+            {txHashes.length > 0 && (
+              <p className="micro" style={{ marginBottom: 12 }}>
+                {txHashes.map((hash) => (
+                  <a
+                    key={hash}
+                    href={`https://hashscan.io/testnet/transaction/${hash}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="mono"
+                    style={{ display: "block", wordBreak: "break-all" }}
+                  >
+                    {hash}
+                  </a>
+                ))}
+              </p>
+            )}
             <div className="notice notice--verified">
               <span className="notice__icon" aria-hidden="true">
                 ✓
@@ -347,13 +428,26 @@ export function ListingForm() {
 
               <div className="form-actions">
                 <div>
+                  {progress && (
+                    <p className="micro dim" style={{ marginBottom: 8 }}>
+                      {progress}
+                    </p>
+                  )}
+                  {listingError && (
+                    <p
+                      className="micro"
+                      style={{ color: "crimson", marginBottom: 8 }}
+                    >
+                      ● {listingError}
+                    </p>
+                  )}
                   <button
                     type="submit"
                     className="btn"
                     disabled={!ready || phase === "issuing"}
                   >
                     {phase === "issuing"
-                      ? "Minting room tokens…"
+                      ? (progress ?? "Publishing…")
                       : `Issue ${chosen.length} room ${chosen.length === 1 ? "token" : "tokens"}`}
                   </button>
                   {!ready && phase === "idle" && (

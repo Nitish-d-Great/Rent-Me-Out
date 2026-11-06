@@ -20,6 +20,12 @@ const FREEZE_ABI = [
     { type: "function", name: "unfreezeRoom", stateMutability: "nonpayable",
       inputs: [{ name: "listingId", type: "uint256" }, { name: "reasonHash", type: "bytes32" }],
       outputs: [] },
+    { type: "function", name: "approveProperty", stateMutability: "nonpayable",
+      inputs: [{ name: "applicationId", type: "bytes32" }, { name: "commitment", type: "uint256" }],
+      outputs: [] },
+    { type: "function", name: "rejectProperty", stateMutability: "nonpayable",
+      inputs: [{ name: "applicationId", type: "bytes32" }, { name: "reasonHash", type: "bytes32" }],
+      outputs: [] },
     { type: "error", name: "AlreadyFrozen", inputs: [] },
     { type: "error", name: "NotFrozen", inputs: [] },
     { type: "error", name: "NotRegistrar", inputs: [] },
@@ -85,3 +91,56 @@ export const freezeRoom = (listingId: bigint, reason: string) =>
 
 export const unfreezeRoom = (listingId: bigint, reason: string) =>
   write("unfreezeRoom", listingId, reason);
+
+/**
+ * Admits a property to the approved set.
+ *
+ * The commitment is the owner's Semaphore identity commitment, generated on their own
+ * device: the registrar approves a commitment without learning which listings it will
+ * later produce, which is what keeps the owner's listings unlinkable.
+ */
+export async function approveProperty(
+  applicationId: `0x${string}`,
+  commitment: bigint,
+): Promise<`0x${string}`> {
+  const account = registrar();
+  const address = registryAddress();
+
+  await publicClient().simulateContract({
+    address, abi: FREEZE_ABI, functionName: "approveProperty",
+    args: [applicationId, commitment], account, gas: WRITE_GAS,
+  });
+
+  const wallet = createWalletClient({ account, chain: hederaTestnet, transport: http() });
+  const hash = await wallet.writeContract({
+    address, abi: FREEZE_ABI, functionName: "approveProperty",
+    args: [applicationId, commitment], gas: WRITE_GAS, chain: hederaTestnet,
+  });
+  const receipt = await publicClient().waitForTransactionReceipt({ hash, timeout: 120_000 });
+  if (receipt.status !== "success") throw new Error(`approveProperty ${hash} reverted`);
+  return hash;
+}
+
+/** Declines an application. Only the reason's hash is recorded on-chain. */
+export async function rejectProperty(
+  applicationId: `0x${string}`,
+  reason: string,
+): Promise<`0x${string}`> {
+  const account = registrar();
+  const address = registryAddress();
+  const reasonHash = hashReason(reason);
+
+  await publicClient().simulateContract({
+    address, abi: FREEZE_ABI, functionName: "rejectProperty",
+    args: [applicationId, reasonHash], account, gas: WRITE_GAS,
+  });
+
+  const wallet = createWalletClient({ account, chain: hederaTestnet, transport: http() });
+  const hash = await wallet.writeContract({
+    address, abi: FREEZE_ABI, functionName: "rejectProperty",
+    args: [applicationId, reasonHash], gas: WRITE_GAS, chain: hederaTestnet,
+  });
+  const receipt = await publicClient().waitForTransactionReceipt({ hash, timeout: 120_000 });
+  if (receipt.status !== "success") throw new Error(`rejectProperty ${hash} reverted`);
+  return hash;
+}

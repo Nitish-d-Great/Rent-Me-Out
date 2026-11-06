@@ -27,6 +27,8 @@ export const REGISTRY_ABI = parseAbi([
   "function usdc() view returns (address)",
   "function rights() view returns (address)",
   "function rootVersion() view returns (uint256)",
+  "function approvedRoot() view returns (uint256, uint256)",
+  "function listingMessage(uint256 room, uint64 start, uint64 end, uint256 price, address payout) view returns (uint256)",
   "error NoSuchListing()",
 ]);
 
