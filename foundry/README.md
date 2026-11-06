@@ -98,11 +98,11 @@ and the dispute freeze; both exit non-zero on failure.
 
 | Contract | Address |
 |---|---|
-| `RentalRegistry` | [`0x7bd8aBCD48A7282868E88770089Fa5cF8A315EEa`](https://hashscan.io/testnet/contract/0x7bd8aBCD48A7282868E88770089Fa5cF8A315EEa) |
-| `BrokerIdentityRegistry` | [`0xF3A8f444502A2B9Be6B9AdA344c9A1b07Db4B0dC`](https://hashscan.io/testnet/contract/0xF3A8f444502A2B9Be6B9AdA344c9A1b07Db4B0dC) |
+| `RentalRegistry` | [`0xb7Bd37F38129A93f49CEf030E63Cfb48D6F52e9E`](https://hashscan.io/testnet/contract/0xb7Bd37F38129A93f49CEf030E63Cfb48D6F52e9E) |
+| `BrokerIdentityRegistry` | [`0x87081bAA3a6F0518f16d787e53754c5fD6a6Dac9`](https://hashscan.io/testnet/contract/0x87081bAA3a6F0518f16d787e53754c5fD6a6Dac9) |
 | `RoomRights` | [`0x929f2547c0aa473Dcd22f4a7897C20782c1A1BC2`](https://hashscan.io/testnet/contract/0x929f2547c0aa473Dcd22f4a7897C20782c1A1BC2) |
-| `DemoUSDC` | [`0xa8C449bDB4958Cf63b4f5a8Dcf41b6E5a95bEd9e`](https://hashscan.io/testnet/contract/0xa8C449bDB4958Cf63b4f5a8Dcf41b6E5a95bEd9e) |
-| `Semaphore` | [`0xA2A9dB3eB2715d03071E70D8bb2987E1AC79676E`](https://hashscan.io/testnet/contract/0xA2A9dB3eB2715d03071E70D8bb2987E1AC79676E) |
+| `DemoUSDC` | [`0xDf44cFf3dD65135b2d7Ec45b77BE85ae8dAa2876`](https://hashscan.io/testnet/contract/0xDf44cFf3dD65135b2d7Ec45b77BE85ae8dAa2876) |
+| `Semaphore` | [`0xA9bdBf426F52dC24ced44aEb36Bd8F6bd580C067`](https://hashscan.io/testnet/contract/0xA9bdBf426F52dC24ced44aEb36Bd8F6bd580C067) |
 
 Approved-property group `1`, root version 3 (the three demo properties). Listing 1 is sold and
 live: `isValid() == true`, 1200 dUSDC settled to the payout wallet.
