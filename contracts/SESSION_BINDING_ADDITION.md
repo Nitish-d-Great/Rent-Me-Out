@@ -168,5 +168,22 @@ either dropping it for the demo or logging it loudly.
 | Duplicate identity attempt | reverts `IdentityAlreadyLinked(existingWallet)` → surfaced as 409 |
 | Tenant checks a broker at a viewing | `sessionMatchesHolder(sessionKey, holderOf(roomId))` |
 
-Once this is deployed, give me the address and I will swap
-`app/lib/world/bindings.ts` off its fail-closed stubs and onto this contract.
+## You can deploy WITHOUT this and unblock enrollment today
+
+The session functions are needed for the viewing presence check only. `registerBroker`
+as it stands already covers enrollment — World verification, identity binding, and the
+duplicate-identity rejection, which is what the IDKit bounty actually scores.
+
+The backend now asks the adapter `supportsSessions()` and skips session binding when it
+answers false, so a registry without these functions lets a broker enroll cleanly rather
+than failing the whole flow. The presence route returns an explicit
+`session_binding_unsupported` instead of a red result, because "we cannot perform this
+check" must not look like "this broker failed it".
+
+So: **deploy what you have, add these functions after.** Implement `supportsSessions()`
+as a constant or an env flag — not a try/catch around `bindSession`, which would swallow
+a genuine `SessionAlreadyBound` (someone moving a proven session to another wallet) as
+if it were a missing feature.
+
+Once deployed, give me the address and I will swap `app/lib/world/bindings.ts` off its
+fail-closed stubs and onto this contract.

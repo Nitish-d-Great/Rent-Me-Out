@@ -1,8 +1,10 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { QRCodeSVG } from "qrcode.react";
 import { useWallet } from "@/components/providers";
 import { useWorldVerification } from "@/lib/world/use-world-verification";
+import { isDevSimulator } from "@/lib/world/client";
 import type { WorldAction } from "@/lib/world/config";
 
 /**
@@ -23,7 +25,10 @@ export function WorldIdButton({
 }) {
   const [open, setOpen] = useState(false);
   const { address } = useWallet();
-  const { stage, failureMessage, start, reset } = useWorldVerification();
+  const { stage, connectorUri, failureMessage, failureCode, start, reset } =
+    useWorldVerification();
+  // In simulator mode nothing scans the QR, so we must not show one.
+  const simulated = isDevSimulator();
   const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const onVerifiedRef = useRef(onVerified);
 
@@ -66,14 +71,22 @@ export function WorldIdButton({
         ? "You're verified"
         : stage === "validating"
           ? "Validating the proof"
-          : "Checking a real person";
+          : simulated
+            ? "Completing via simulator"
+            : connectorUri
+              ? "Scan with World App"
+              : "Checking a real person";
 
   const body =
     stage === "failed"
       ? failureMessage
       : stage === "verified"
         ? "Your wallet is bound to a unique identity, recorded on-chain. This identity cannot be linked to a second wallet."
-        : "A proof is generated on your device. Rent Me Out validates it on the server and stores only a hash — never your face or ID.";
+        : simulated
+          ? "Development mode: the World ID Simulator is completing this request. No device is involved and there is nothing to scan. The proof itself is real and is verified on the server."
+          : stage === "scanning" && connectorUri
+            ? "Scan this with World App. The proof is generated on your device — Rent Me Out validates it on the server and stores only a hash, never your face or ID."
+            : "A proof is generated on your device. Rent Me Out validates it on the server and stores only a hash — never your face or ID.";
 
   const statusLine =
     stage === "failed"
@@ -82,7 +95,11 @@ export function WorldIdButton({
         ? "bound on-chain"
         : stage === "validating"
           ? "POST /api/world/verify"
-          : "awaiting World App";
+          : simulated
+            ? "simulator · no device"
+            : connectorUri
+              ? "waiting for your device"
+              : "preparing request";
 
   return (
     <>
@@ -120,17 +137,32 @@ export function WorldIdButton({
             </div>
 
             <div className="worldid-dialog__body">
-              <div
-                className="worldid-scan"
-                data-stage={stage === "failed" ? "scanning" : stage}
-                aria-hidden="true"
-              >
-                <span className="worldid-scan__ring worldid-scan__ring--1" />
-                <span className="worldid-scan__ring worldid-scan__ring--2" />
-                <span className="worldid-scan__ring worldid-scan__ring--3" />
-                <span className="worldid-scan__face" />
-                <span className="worldid-scan__line" />
-              </div>
+              {stage === "scanning" && connectorUri && !simulated ? (
+                /* The real IDKit connector URI. Rendered only as a QR -- it carries the
+                   bridge encryption key, so it is never logged or shown as text. */
+                <div className="worldid-qr">
+                  <QRCodeSVG
+                    value={connectorUri}
+                    size={184}
+                    bgColor="#ffffff"
+                    fgColor="#16233b"
+                    level="M"
+                    marginSize={1}
+                  />
+                </div>
+              ) : (
+                <div
+                  className="worldid-scan"
+                  data-stage={stage === "failed" ? "scanning" : stage}
+                  aria-hidden="true"
+                >
+                  <span className="worldid-scan__ring worldid-scan__ring--1" />
+                  <span className="worldid-scan__ring worldid-scan__ring--2" />
+                  <span className="worldid-scan__ring worldid-scan__ring--3" />
+                  <span className="worldid-scan__face" />
+                  <span className="worldid-scan__line" />
+                </div>
+              )}
 
               <h2 id="worldid-title">{heading}</h2>
               <p aria-live="polite">{body}</p>
@@ -139,7 +171,7 @@ export function WorldIdButton({
                 {stage !== "failed" && stage !== "verified" && (
                   <span className="spinner" aria-hidden="true" />
                 )}
-                <span className="mono">{statusLine}</span>
+                <span className="mono">{failureCode ?? statusLine}</span>
                 <span className="micro dim">{action}</span>
               </div>
 
@@ -159,9 +191,8 @@ export function WorldIdButton({
               )}
 
               <p className="worldid-disclaimer">
-                Selfie Check on testnet for this demo; Proof of Human is the production
-                credential. World ID proves personhood and uniqueness — it does not
-                prove property title.
+                Proof of Human on World ID 4.0. World ID proves personhood and
+                uniqueness — it does not prove property title.
               </p>
             </div>
           </div>

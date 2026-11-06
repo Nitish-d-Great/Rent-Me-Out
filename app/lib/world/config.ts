@@ -21,6 +21,28 @@ export const WORLD_ACTIONS = {
 
 export type WorldAction = (typeof WORLD_ACTIONS)[keyof typeof WORLD_ACTIONS];
 
+/**
+ * Appended to action names outside production.
+ *
+ * World ID allows each identity to complete a given action exactly once -- the World
+ * App refuses a second attempt with `nullifier_replayed`, even though the Portal's
+ * verify endpoint would accept it. So a Sandbox identity gets one shot at
+ * `broker-verify` and rehearsing the real-device flow needs a fresh action.
+ *
+ * Bump this between rehearsals (r1, r2, …). Production leaves it empty, where one
+ * verification per person is exactly the semantic we want.
+ *
+ * Note each suffix yields a different nullifier, and therefore a different on-chain
+ * identityKey: runs do not collide, and a rehearsal cannot be mistaken for the real
+ * binding.
+ */
+export const ACTION_SUFFIX = process.env.NEXT_PUBLIC_WORLD_ACTION_SUFFIX ?? "";
+
+/** The action as sent to World, including any rehearsal suffix. */
+export function actionName(action: WorldAction): string {
+  return ACTION_SUFFIX ? `${action}-${ACTION_SUFFIX}` : action;
+}
+
 /** `staging` is what the World ID Simulator issues against. */
 export type WorldEnvironment = "production" | "staging" | "sandbox";
 
