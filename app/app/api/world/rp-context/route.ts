@@ -1,6 +1,11 @@
 import { NextResponse } from "next/server";
 import { signRequest } from "@worldcoin/idkit-core/signing";
-import { WORLD_ACTIONS, serverConfig, type WorldAction } from "@/lib/world";
+import {
+  WORLD_ACTIONS,
+  serverConfig,
+  type RpContext,
+  type WorldAction,
+} from "@/lib/world";
 
 /**
  * Issues an RP signature for an IDKit request.
@@ -27,20 +32,24 @@ export async function POST(request: Request) {
     }
   }
 
-  const { signingKeyHex } = serverConfig();
+  const { signingKeyHex, rpId } = serverConfig();
   const signed = await signRequest(
     action
       ? { signingKeyHex, action: action as WorldAction }
       : { signingKeyHex },
   );
 
-  return NextResponse.json(
-    {
-      sig: signed.sig,
-      nonce: signed.nonce,
-      created_at: signed.createdAt,
-      expires_at: signed.expiresAt,
-    },
-    { headers: { "Cache-Control": "no-store" } },
-  );
+  // Assembled whole, in the exact shape IDKit expects. signRequest returns `sig`;
+  // rp_context wants it as `signature`, and carries rp_id alongside.
+  const context: RpContext = {
+    rp_id: rpId,
+    nonce: signed.nonce,
+    created_at: signed.createdAt,
+    expires_at: signed.expiresAt,
+    signature: signed.sig,
+  };
+
+  return NextResponse.json(context, {
+    headers: { "Cache-Control": "no-store" },
+  });
 }

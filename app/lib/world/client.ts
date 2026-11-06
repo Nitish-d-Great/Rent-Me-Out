@@ -1,7 +1,12 @@
 "use client";
 
 import { IDKit, CredentialRequest } from "@worldcoin/idkit-core";
-import { WORLD_ACTIONS, WORLD_ENVIRONMENT, type WorldAction } from "./config";
+import {
+  WORLD_ACTIONS,
+  WORLD_ENVIRONMENT,
+  type RpContext,
+  type WorldAction,
+} from "./config";
 import type { SignedChallenge } from "./challenge";
 
 /**
@@ -42,14 +47,18 @@ export function clearSessionId() {
   window.localStorage.removeItem(SESSION_STORAGE_KEY);
 }
 
-async function rpContext(action?: WorldAction) {
+/**
+ * Fresh per request -- the docs require a new RP signature for session creation and
+ * each subsequent check, and the default TTL is 300s.
+ */
+async function rpContext(action?: WorldAction): Promise<RpContext> {
   const res = await fetch("/api/world/rp-context", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(action ? { action } : {}),
   });
   if (!res.ok) throw new Error("Could not start verification");
-  return res.json();
+  return (await res.json()) as RpContext;
 }
 
 export type EnrollFailure =
