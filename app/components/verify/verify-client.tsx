@@ -26,7 +26,7 @@ const stateCopy: Record<RoomState, string> = {
 };
 
 export function VerifyClient({
-  initialRoom = "r2",
+  initialRoom = "",
   initialState,
 }: {
   initialRoom?: string;

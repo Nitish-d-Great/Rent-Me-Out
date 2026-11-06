@@ -28,5 +28,5 @@ export default async function VerifyPropertyPage({
       ? (query.state as RoomState)
       : undefined;
 
-  return <VerifyClient initialRoom={query.room ?? "r2"} initialState={state} />;
+  return <VerifyClient initialRoom={query.room ?? ""} initialState={state} />;
 }

@@ -29,7 +29,7 @@ const roleConfig: Record<
       { href: "/broker", label: "Overview", key: "01" },
       { href: "/marketplace", label: "Browse rooms", key: "02" },
       { href: "/broker#rights", label: "My room rights", key: "03" },
-      { href: "/verify/rmo-3b-andheri?room=r2", label: "Public verify", key: "04" },
+      { href: "/verify/rmo-3b-andheri", label: "Public verify", key: "04" },
       { href: "/profile", label: "Public profile", key: "05" },
     ],
   },
