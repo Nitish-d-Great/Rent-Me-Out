@@ -7,9 +7,10 @@ import {
   applications as seedApplications,
   demo,
   formatDate,
-  rooms,
+  rooms as sampleRooms,
   type RoomState,
 } from "@/lib/data";
+import { useLiveRooms } from "@/lib/chain/use-live-rooms";
 
 type AuditEntry = {
   id: string;
@@ -43,6 +44,16 @@ const initialAudit: AuditEntry[] = [
 ];
 
 export function RegistrarConsole() {
+  // Live listings from RentalRegistry. Freezing acts on these ids, so the console must
+  // not offer sample rooms that have no on-chain counterpart.
+  const { rooms: liveRooms, status: liveStatus } = useLiveRooms();
+  const rooms = liveRooms ?? sampleRooms;
+  const [freezeTx, setFreezeTx] = useState<string | null>(null);
+  const [decisionTx, setDecisionTx] = useState<string | null>(null);
+  const [decisionError, setDecisionError] = useState<string | null>(null);
+  const [freezeError, setFreezeError] = useState<string | null>(null);
+  const [freezing, setFreezing] = useState<string | null>(null);
+
   const [apps, setApps] = useState(seedApplications);
   const [selectedId, setSelectedId] = useState("APP-1042");
   const [rejection, setRejection] = useState("");
@@ -83,11 +94,42 @@ export function RegistrarConsole() {
     ]);
   };
 
-  const decide = (decision: "approved" | "rejected") => {
+  /**
+   * The registrar's decision, written to Hedera.
+   *
+   * Approving admits the owner's Semaphore commitment to the approved set, which is
+   * what later lets them prove a property is approved without revealing which one.
+   * Local state only changes once the transaction has actually succeeded.
+   */
+  const decide = async (decision: "approved" | "rejected") => {
     if (!selected || selected.status !== "pending") return;
     if (decision === "rejected" && !rejection.trim()) return;
+
     setProcessing(decision === "approved" ? "approve" : "reject");
-    window.setTimeout(() => {
+    setDecisionError(null);
+    setDecisionTx(null);
+    try {
+      const res = await fetch("/api/properties", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          action: decision === "approved" ? "approve" : "reject",
+          applicationId: selected.id,
+          reason: decision === "rejected" ? rejection.trim() : undefined,
+        }),
+      });
+      const data = (await res.json()) as {
+        ok?: boolean; error?: string; transactionHash?: string;
+      };
+      if (!res.ok || !data.ok) {
+        setDecisionError(
+          data.error === "commitment_required"
+            ? "This application has no owner commitment on file, so there is nothing to admit to the approved set."
+            : (data.error ?? "decision_failed"),
+        );
+        return;
+      }
+
       setApps((current) =>
         current.map((app) =>
           app.id === selected.id
@@ -100,22 +142,70 @@ export function RegistrarConsole() {
             : app,
         ),
       );
+      setDecisionTx(data.transactionHash ?? null);
       pushAudit(
         decision === "approved" ? "Property approved" : "Property rejected",
         `${selected.id} · ${selected.nickname}`,
         decision === "rejected" ? rejection.trim() : "Deed verified",
       );
-      setProcessing(null);
       setRejection("");
-    }, 1300);
+    } catch {
+      setDecisionError("network_error");
+    } finally {
+      setProcessing(null);
+    }
   };
 
   const pending = apps.filter((app) => app.status === "pending").length;
   const roomList = rooms.map((room, index) => ({
     ...room,
     index,
+    // The chain is authoritative: an optimistic local state is only used while a
+    // transaction is in flight.
     state: roomStates[room.id] ?? room.state,
   }));
+
+  /**
+   * Freeze or unfreeze on-chain, signed by the registrar on the server.
+   * Local state is only updated once the transaction has actually succeeded.
+   */
+  const runFreeze = async (
+    listingId: string,
+    action: "freeze" | "unfreeze",
+    reason: string,
+    label: string,
+  ) => {
+    setFreezing(listingId);
+    setFreezeError(null);
+    setFreezeTx(null);
+    try {
+      const res = await fetch(`/api/rooms/${listingId}/freeze`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ action, reason }),
+      });
+      const data = (await res.json()) as {
+        ok?: boolean;
+        error?: string;
+        state?: string | null;
+        transactionHash?: string;
+      };
+      if (!res.ok || !data.ok) {
+        setFreezeError(data.error ?? "freeze_failed");
+        return;
+      }
+      setRoomStates((prev) => ({
+        ...prev,
+        [listingId]: (data.state as RoomState) ?? (action === "freeze" ? "frozen" : "held"),
+      }));
+      setFreezeTx(data.transactionHash ?? null);
+      pushAudit(action === "freeze" ? "Room frozen" : "Room unfrozen", label, reason);
+    } catch {
+      setFreezeError("network_error");
+    } finally {
+      setFreezing(null);
+    }
+  };
 
   return (
     <>
@@ -256,6 +346,30 @@ export function RegistrarConsole() {
               {selected.status === "pending" ? (
                 <div style={{ marginTop: 18 }}>
                   <div className="field">
+                    {(decisionTx || decisionError) && (
+                      <p className="micro" style={{ marginBottom: 10 }}>
+                        {decisionTx ? (
+                          <>
+                            <span style={{ color: "green" }}>
+                              ● Recorded on Hedera testnet
+                            </span>{" "}
+                            —{" "}
+                            <a
+                              href={`https://hashscan.io/testnet/transaction/${decisionTx}`}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="mono"
+                            >
+                              {decisionTx.slice(0, 18)}…
+                            </a>
+                          </>
+                        ) : (
+                          <span style={{ color: "crimson" }}>
+                            ● {decisionError} — nothing changed on-chain.
+                          </span>
+                        )}
+                      </p>
+                    )}
                     <label htmlFor="rejection">
                       Rejection reason · required to reject
                     </label>
@@ -270,7 +384,7 @@ export function RegistrarConsole() {
                     <button
                       type="button"
                       className="btn btn--verified btn--small"
-                      onClick={() => decide("approved")}
+                      onClick={() => void decide("approved")}
                       disabled={processing !== null}
                     >
                       {processing === "approve"
@@ -280,7 +394,7 @@ export function RegistrarConsole() {
                     <button
                       type="button"
                       className="btn btn--alert btn--small"
-                      onClick={() => decide("rejected")}
+                      onClick={() => void decide("rejected")}
                       disabled={!rejection.trim() || processing !== null}
                     >
                       {processing === "reject"
@@ -328,6 +442,18 @@ export function RegistrarConsole() {
       <section className="panel" id="properties" style={{ marginTop: 24 }}>
         <div className="panel__head">
           <h2>Rooms + dispute controls</h2>
+          <span className="micro">
+            {liveStatus === "live" ? (
+              <span style={{ color: "green" }}>● Live · RentalRegistry</span>
+            ) : liveStatus === "loading" ? (
+              <span className="dim">Reading listings…</span>
+            ) : (
+              // Freezing a sample room would fail: it has no on-chain listing.
+              <span style={{ color: "crimson" }}>
+                ● Sample rooms — freeze is unavailable
+              </span>
+            )}
+          </span>
           <span className="badge badge--quiet">Room 2 · Ashoka Residency</span>
         </div>
         <div className="panel__body panel__body--flush">
@@ -367,16 +493,17 @@ export function RegistrarConsole() {
                         <button
                           type="button"
                           className="btn btn--ghost btn--small"
-                          onClick={() => {
-                            setRoomStates({ ...roomStates, [room.id]: "held" });
-                            pushAudit(
-                              "Room unfrozen",
-                              `Room ${room.index + 1} · Ashoka Residency`,
+                          disabled={freezing === room.id}
+                          onClick={() =>
+                            void runFreeze(
+                              room.id,
+                              "unfreeze",
                               "Dispute resolved",
-                            );
-                          }}
+                              `${room.name} · Ashoka Residency`,
+                            )
+                          }
                         >
-                          Unfreeze
+                          {freezing === room.id ? "Unfreezing…" : "Unfreeze"}
                         </button>
                       ) : room.state === "held" ? (
                         <button
@@ -400,6 +527,30 @@ export function RegistrarConsole() {
               </tbody>
             </table>
           </div>
+
+          {(freezeTx || freezeError) && (
+            <div className="panel__body" style={{ borderTop: "1px solid var(--line)" }}>
+              {freezeTx ? (
+                <p className="micro">
+                  <span style={{ color: "green" }}>● Confirmed on Hedera testnet</span>{" "}
+                  —{" "}
+                  <a
+                    href={`https://hashscan.io/testnet/transaction/${freezeTx}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="mono"
+                  >
+                    {freezeTx.slice(0, 18)}…
+                  </a>
+                </p>
+              ) : (
+                <p className="micro" style={{ color: "crimson" }}>
+                  ● The freeze did not go through ({freezeError}). Nothing changed
+                  on-chain.
+                </p>
+              )}
+            </div>
+          )}
 
           {freezeTarget && (
             <div className="panel__body" style={{ borderTop: "1px solid var(--line)" }}>
@@ -430,22 +581,19 @@ export function RegistrarConsole() {
                     <button
                       type="button"
                       className="btn btn--alert btn--small"
-                      disabled={!freezeReason.trim()}
+                      disabled={!freezeReason.trim() || freezing !== null}
                       onClick={() => {
-                        setRoomStates({
-                          ...roomStates,
-                          [freezeTarget]: "frozen",
-                        });
-                        pushAudit(
-                          "Room frozen",
-                          `Room ${
-                            rooms.findIndex((room) => room.id === freezeTarget) +
-                            1
-                          } · Ashoka Residency`,
-                          freezeReason.trim(),
-                        );
+                        const target = freezeTarget;
+                        const reason = freezeReason.trim();
+                        const room = rooms.find((r) => r.id === target);
                         setFreezeTarget(null);
                         setFreezeReason("");
+                        void runFreeze(
+                          target,
+                          "freeze",
+                          reason,
+                          `${room?.name ?? `Room ${target}`} · Ashoka Residency`,
+                        );
                       }}
                     >
                       Freeze room

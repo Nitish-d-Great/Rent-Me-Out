@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 import { useWallet } from "@/components/providers";
+import { getOrCreateIdentity } from "@/lib/chain/owner-identity";
 import { VerifyBadge } from "@/components/ui/verify-badge";
 import { WorldIdButton } from "@/components/ui/world-id-button";
 
@@ -12,6 +13,9 @@ export function PropertyForm() {
   const { connected, connect } = useWallet();
   const [verified, setVerified] = useState(false);
   const [submit, setSubmit] = useState<SubmitState>("idle");
+  const [error, setError] = useState<string | null>(null);
+  const [reference, setReference] = useState<string | null>(null);
+  const [commitment, setCommitment] = useState<string | null>(null);
   const [deed, setDeed] = useState<string>("");
   const [form, setForm] = useState({
     nickname: "Bandra studio",
@@ -32,11 +36,47 @@ export function PropertyForm() {
     form.privacy;
   const canSubmit = connected && verified && Boolean(required);
 
-  const submitForm = (event: React.FormEvent) => {
+  /**
+   * Submits the application together with this device's Semaphore commitment.
+   *
+   * The identity secret is created here and stays in the browser: the registrar
+   * approves a commitment, never the secret, which is what lets a later listing proof
+   * stay unlinkable to this property.
+   */
+  const submitForm = async (event: React.FormEvent) => {
     event.preventDefault();
     if (!canSubmit) return;
     setSubmit("submitting");
-    window.setTimeout(() => setSubmit("submitted"), 1400);
+    setError(null);
+    try {
+      const identity = getOrCreateIdentity();
+      const applicationId = `APP-${Date.now().toString(36).toUpperCase()}`;
+      const res = await fetch("/api/properties", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          action: "apply",
+          applicationId,
+          commitment: identity.commitment,
+          nickname: form.nickname.trim(),
+          locality: form.locality.trim(),
+          city: form.city.trim(),
+          rooms: Number(form.rooms),
+        }),
+      });
+      const data = (await res.json()) as { ok?: boolean; error?: string };
+      if (!res.ok || !data.ok) {
+        setError(data.error ?? "submit_failed");
+        setSubmit("idle");
+        return;
+      }
+      setReference(applicationId);
+      setCommitment(identity.commitment);
+      setSubmit("submitted");
+    } catch {
+      setError("network_error");
+      setSubmit("idle");
+    }
   };
 
   if (submit === "submitted") {
@@ -47,6 +87,18 @@ export function PropertyForm() {
           <span className="badge badge--brass">Pending registrar review</span>
         </div>
         <div className="panel__body">
+          {reference && (
+            <p className="micro" style={{ marginBottom: 12 }}>
+              Reference <span className="mono">{reference}</span>
+              {commitment && (
+                <>
+                  {" · "}identity commitment{" "}
+                  <span className="mono">{commitment.slice(0, 16)}…</span>
+                  {" — "}the secret behind it stays on this device.
+                </>
+              )}
+            </p>
+          )}
           <div className="notice notice--verified">
             <span className="notice__icon" aria-hidden="true">
               ✓
@@ -338,6 +390,11 @@ export function PropertyForm() {
           <span className="badge badge--quiet">Registrar reviews the deed</span>
         </div>
         <div className="panel__body">
+          {error && (
+            <p className="micro" style={{ color: "crimson", marginBottom: 10 }}>
+              ● The application was not submitted ({error}). Nothing was recorded.
+            </p>
+          )}
           <div className="form-actions" style={{ marginTop: 0, paddingTop: 0, borderTop: 0 }}>
             <div>
               <button

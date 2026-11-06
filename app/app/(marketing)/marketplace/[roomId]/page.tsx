@@ -12,6 +12,25 @@ import {
   rooms,
   type Room,
 } from "@/lib/data";
+import { readRoom } from "@/lib/chain/registry";
+import { recordToRoom } from "@/lib/chain/to-room";
+
+/**
+ * A numeric id is a real listing, read from the registry. Anything else is one of the
+ * sample rooms, kept so older demo links still resolve -- but those cannot be bought,
+ * because they have no on-chain listing behind them.
+ */
+async function loadRoom(roomId: string): Promise<{ room: Room | null; live: boolean }> {
+  if (/^\d+$/.test(roomId)) {
+    try {
+      const record = await readRoom(BigInt(roomId));
+      if (record) return { room: recordToRoom(record), live: true };
+    } catch {
+      // Fall through to the sample set rather than showing an error page.
+    }
+  }
+  return { room: rooms.find((entry) => entry.id === roomId) ?? null, live: false };
+}
 
 type PageProps = {
   params: Promise<{ roomId: string }>;
@@ -21,7 +40,7 @@ export async function generateMetadata({
   params,
 }: PageProps): Promise<Metadata> {
   const { roomId } = await params;
-  const room = rooms.find((entry) => entry.id === roomId);
+  const { room } = await loadRoom(roomId);
   return {
     title: room ? room.name : "Room",
     description: room?.note,
@@ -30,10 +49,10 @@ export async function generateMetadata({
 
 export default async function RoomDetailPage({ params }: PageProps) {
   const { roomId } = await params;
-  const room = rooms.find((entry) => entry.id === roomId);
+  const { room, live } = await loadRoom(roomId);
   if (!room) notFound();
 
-  const index = rooms.findIndex((entry) => entry.id === roomId);
+  const index = Math.max(0, rooms.findIndex((entry) => entry.id === roomId));
 
   return (
     <div className="shell section section--tight">
@@ -166,7 +185,7 @@ export default async function RoomDetailPage({ params }: PageProps) {
           </div>
         </div>
 
-        <BuyPanel room={room as Room} />
+        <BuyPanel room={room as Room} live={live} />
       </div>
     </div>
   );
