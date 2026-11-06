@@ -20,7 +20,7 @@ The core promise is: **one verified broker per room and rental period, verifiabl
 | **Owner** | Prove control of a property, offer room rights, receive payment | Submit a property and deed, respond to a rejection, list available rooms and periods, set a one-time price per room, cancel unsold rooms before the period | World ID personhood/uniqueness check and registrar deed review |
 | **Registrar** | Prevent unsupported properties and handle disputes | Review deed submissions, approve or reject with a reason, register approved properties, verify brokers for token eligibility, freeze a token during a dispute, burn unsold tokens after cancellation | Platform-operated role with restricted issuer/agent permissions |
 | **Broker** | Buy legitimate room rights and prove them to prospective tenants | Verify identity, browse available rooms, pay the owner, hold the room token, show the verification page at a viewing | World ID check; approved wallet on the ERC-3643 compliance list |
-| **Tenant** | Check that a broker is authorised for a specific room and period | Browse public room and rights information, scan a QR code, run a live broker-presence check | No account required for public verification; the broker completes the live check |
+| **Tenant** | Check that a broker is authorised for a specific room and period | Browse public room and rights information, scan a QR code, run a live broker presence check | No account required for public verification; the broker completes the live check |
 | **Platform backend** | Connect partner services and keep records in sync | Validate partner proofs, write public index records, upload and decrypt deed documents for authorised review, send platform transactions, track token lifecycle events | Server-side secrets and operational controls; never acts as owner or broker |
 
 The registrar is the only platform-run user role. Owners, brokers, and tenants use the same web app with role-specific navigation and actions.
@@ -198,7 +198,7 @@ For any action that crosses an external service or chain, show a pending state, 
 | Partner | Product role | Data written/read | UX impact |
 |---|---|---|---|
 | **Hedera + Asset Tokenization Studio (ATS)** | Canonical rights and settlement layer | ERC-3643 room tokens, verified-holder compliance list, USDC purchase settlement, freeze/burn lifecycle actions, property/listing registry | Wallet transactions, ownership and status confirmation, transaction links, scheduled expiry |
-| **World ID / IDKit** | Personhood and uniqueness verification | Proof validation and nullifier-to-wallet binding; separate actions for owner verification, broker verification, and broker presence | Identity check during onboarding and fresh identity match at a viewing; no raw identity details displayed |
+| **World ID / IDKit** | Personhood and uniqueness verification | Proof validation and nullifier-to-wallet binding; two actions (owner verification and broker verification), plus a session proof for repeated broker presence checks at viewings | Identity check during onboarding and fresh session proof at a viewing; no raw identity details displayed |
 | **Arkiv** | Searchable application, listing, and verification index | Property applications, room listings, rights records, public marketplace and registrar queue queries, expiry metadata | Fast searchable listings and public verification data; chain reads confirm authoritative rights status |
 | **Swarm** | Private deed document storage | Encrypted deed upload and authorised retrieval through backend | Owner upload and registrar-only review; deed content is never publicly queryable |
 
@@ -221,7 +221,7 @@ For any action that crosses an external service or chain, show a pending state, 
 5. Broker verifies with World ID and is added to the ATS verified list.
 6. Broker browses and buys one room using test USDC; owner receives payment and broker receives the token.
 7. Tenant scans a QR and sees the current holder, period, and validity confirmed against Hedera.
-8. Tenant runs one live broker-presence check that produces a clear match or mismatch result.
+8. Tenant runs one live broker presence check (session proof) that produces a clear match or mismatch result.
 9. Registrar freezes a token in a dispute, and the public verification screen reflects the frozen state.
 10. At least one failure path is demonstrated: an unverified broker’s purchase is blocked. Duplicate identity and overlapping listing failures are also handled in the product.
 
@@ -302,7 +302,7 @@ The public verification route should remain directly accessible from a QR code, 
 - ATS supports the needed ERC-3643 roles, transfer restrictions, freeze/burn operations, and the token metadata needed for per-room periods.
 - Whether a custom registry contract can operate as an ATS agent for atomic payment and token transfer; otherwise use the disclosed backend-agent transfer path.
 - Hedera Scheduled Transaction limits; use a keeper job for periods beyond its supported scheduling window.
-- World ID simulator behavior for repeated broker-presence checks and the Passport credential path in production.
+- Whether the World ID Simulator supports session proofs (`createSession` / `proveSession`). The whole presence flow depends on it, so test early. Also unresolved: whether a session proof is cryptographically bound to the credential holder who created the session — the docs do not say, so the presence claim currently rests on the broker holding their own session ID.
 - Arkiv entity expiry precision and maximum duration; filter by end date if expiry cannot be aligned exactly.
 - Swarm postage/Bee availability and the operational model for deed key custody and registrar-only retrieval.
 

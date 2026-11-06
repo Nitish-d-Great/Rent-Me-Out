@@ -234,7 +234,7 @@ export default function BrokerPage() {
                 <span className="timeline__dot" />
                 <div>
                   <strong>You complete World ID</strong>
-                  <span>Fresh broker-presence action</span>
+                  <span>Fresh session proof at each viewing</span>
                 </div>
               </div>
               <div className="timeline__item">
