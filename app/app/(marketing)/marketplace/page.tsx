@@ -3,9 +3,35 @@ import { MarketplaceClient } from "@/components/marketplace/marketplace-client";
 import { demo, formatDate, marketplaceRooms, property } from "@/lib/data";
 import Link from "next/link";
 import { queryListings, readRoomIndex } from "@/lib/arkiv/listings";
-import { readAllRooms } from "@/lib/chain/registry";
+import { readAllRooms, type RoomRecord } from "@/lib/chain/registry";
 import { recordToRoom } from "@/lib/chain/to-room";
 import type { RoomCardData } from "@/components/marketplace/room-card";
+
+const CHAIN_WAIT_MS = 4_000;
+
+/** The Arkiv index in the shape the page renders. Status only: holders come from Hedera. */
+async function recordsFromArkiv(): Promise<RoomRecord[]> {
+  const states: Record<string, RoomRecord["state"]> = {
+    available: "available", sold: "held", frozen: "frozen", cancelled: "cancelled",
+  };
+  const listings = await queryListings().catch(() => []);
+  return listings
+    .sort((a, b) => Number(a.listingId) - Number(b.listingId))
+    .map((listing) => ({
+      listingId: listing.listingId,
+      state: states[listing.status] ?? "available",
+      valid: false,
+      holder: null,
+      holderIdentity: null,
+      start: new Date(listing.startsAt * 1000).toISOString(),
+      end: new Date(listing.endsAt * 1000).toISOString(),
+      priceRaw: listing.priceUsdc,
+      price: (Number(listing.priceUsdc) / 1e6).toFixed(2),
+      roomTag: "",
+      token: listing.token,
+      payout: listing.payout,
+    }));
+}
 
 /**
  * Rooms and their rights come from Hedera, with the city and search from Arkiv. Falls
@@ -17,6 +43,7 @@ async function loadListings(city?: string): Promise<{
   live: boolean;
   cities: string[];
   indexed: boolean;
+  fromIndex: boolean;
 }> {
   let index: Awaited<ReturnType<typeof readRoomIndex>> | null = null;
   let matching: Set<string> | null = null;
@@ -29,7 +56,15 @@ async function loadListings(city?: string): Promise<{
   }
 
   try {
-    const records = await readAllRooms();
+    // A cold read from Hedera can take most of a minute, so don't hold the page for it.
+    // It keeps running and fills the cache for the next visitor.
+    const fromChain = await Promise.race([
+      readAllRooms(),
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), CHAIN_WAIT_MS)),
+    ]);
+    let records = fromChain ?? (await recordsFromArkiv());
+    // Nothing on Arkiv either, so the chain's answer is the only one there is.
+    if (fromChain === null && records.length === 0) records = await readAllRooms();
     if (records.length) {
       const cities = [
         ...new Set([...(index?.values() ?? [])].map((e) => e.city).filter((c): c is string => Boolean(c))),
@@ -52,6 +87,7 @@ async function loadListings(city?: string): Promise<{
         live: true,
         cities,
         indexed: index !== null,
+        fromIndex: fromChain === null,
       };
     }
   } catch {
@@ -62,6 +98,7 @@ async function loadListings(city?: string): Promise<{
     live: false,
     cities: [],
     indexed: false,
+    fromIndex: false,
   };
 }
 
@@ -77,7 +114,7 @@ export default async function MarketplacePage({
   searchParams: Promise<{ city?: string }>;
 }) {
   const { city } = await searchParams;
-  const { rooms, live, cities, indexed } = await loadListings(city);
+  const { rooms, live, cities, indexed, fromIndex } = await loadListings(city);
 
   return (
     <div className="shell section section--tight">
@@ -94,7 +131,9 @@ export default async function MarketplacePage({
           <span className="badge badge--quiet">
             {rooms.length} {rooms.length === 1 ? "listing" : "listings"}
             {live
-              ? ` · rights from Hedera${indexed ? " · search from Arkiv" : ""}`
+              ? fromIndex
+                ? " · from Arkiv · open a room to confirm on Hedera"
+                : ` · rights from Hedera${indexed ? " · search from Arkiv" : ""}`
               : ` · ${demo.periodLabel}`}
           </span>
         </div>
