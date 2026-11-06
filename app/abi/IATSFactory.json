@@ -1,0 +1,262 @@
+[
+  {
+    "type": "function",
+    "name": "deployEquity",
+    "inputs": [
+      {
+        "name": "equityData",
+        "type": "tuple",
+        "internalType": "struct IATSFactory.EquityData",
+        "components": [
+          {
+            "name": "security",
+            "type": "tuple",
+            "internalType": "struct IATSFactory.SecurityData",
+            "components": [
+              {
+                "name": "resolver",
+                "type": "address",
+                "internalType": "address"
+              },
+              {
+                "name": "maxSupply",
+                "type": "uint256",
+                "internalType": "uint256"
+              },
+              {
+                "name": "resolverProxyConfiguration",
+                "type": "tuple",
+                "internalType": "struct IATSFactory.ResolverProxyConfiguration",
+                "components": [
+                  {
+                    "name": "key",
+                    "type": "bytes32",
+                    "internalType": "bytes32"
+                  },
+                  {
+                    "name": "version",
+                    "type": "uint256",
+                    "internalType": "uint256"
+                  }
+                ]
+              },
+              {
+                "name": "erc20MetadataInfo",
+                "type": "tuple",
+                "internalType": "struct IATSFactory.ERC20MetadataInfo",
+                "components": [
+                  {
+                    "name": "name",
+                    "type": "string",
+                    "internalType": "string"
+                  },
+                  {
+                    "name": "symbol",
+                    "type": "string",
+                    "internalType": "string"
+                  },
+                  {
+                    "name": "isin",
+                    "type": "string",
+                    "internalType": "string"
+                  },
+                  {
+                    "name": "decimals",
+                    "type": "uint8",
+                    "internalType": "uint8"
+                  }
+                ]
+              },
+              {
+                "name": "rbacs",
+                "type": "tuple[]",
+                "internalType": "struct IATSFactory.Rbac[]",
+                "components": [
+                  {
+                    "name": "role",
+                    "type": "bytes32",
+                    "internalType": "bytes32"
+                  },
+                  {
+                    "name": "members",
+                    "type": "address[]",
+                    "internalType": "address[]"
+                  }
+                ]
+              },
+              {
+                "name": "externalPauses",
+                "type": "address[]",
+                "internalType": "address[]"
+              },
+              {
+                "name": "externalControlLists",
+                "type": "address[]",
+                "internalType": "address[]"
+              },
+              {
+                "name": "externalKycLists",
+                "type": "address[]",
+                "internalType": "address[]"
+              },
+              {
+                "name": "compliance",
+                "type": "address",
+                "internalType": "address"
+              },
+              {
+                "name": "identityRegistry",
+                "type": "address",
+                "internalType": "address"
+              },
+              {
+                "name": "arePartitionsProtected",
+                "type": "bool",
+                "internalType": "bool"
+              },
+              {
+                "name": "isMultiPartition",
+                "type": "bool",
+                "internalType": "bool"
+              },
+              {
+                "name": "isControllable",
+                "type": "bool",
+                "internalType": "bool"
+              },
+              {
+                "name": "isWhiteList",
+                "type": "bool",
+                "internalType": "bool"
+              },
+              {
+                "name": "clearingActive",
+                "type": "bool",
+                "internalType": "bool"
+              },
+              {
+                "name": "internalKycActivated",
+                "type": "bool",
+                "internalType": "bool"
+              },
+              {
+                "name": "erc20VotesActivated",
+                "type": "bool",
+                "internalType": "bool"
+              }
+            ]
+          },
+          {
+            "name": "equityDetails",
+            "type": "tuple",
+            "internalType": "struct IATSFactory.EquityDetailsData",
+            "components": [
+              {
+                "name": "votingRight",
+                "type": "bool",
+                "internalType": "bool"
+              },
+              {
+                "name": "informationRight",
+                "type": "bool",
+                "internalType": "bool"
+              },
+              {
+                "name": "liquidationRight",
+                "type": "bool",
+                "internalType": "bool"
+              },
+              {
+                "name": "subscriptionRight",
+                "type": "bool",
+                "internalType": "bool"
+              },
+              {
+                "name": "conversionRight",
+                "type": "bool",
+                "internalType": "bool"
+              },
+              {
+                "name": "redemptionRight",
+                "type": "bool",
+                "internalType": "bool"
+              },
+              {
+                "name": "putRight",
+                "type": "bool",
+                "internalType": "bool"
+              },
+              {
+                "name": "dividendRight",
+                "type": "uint8",
+                "internalType": "uint8"
+              },
+              {
+                "name": "currency",
+                "type": "bytes3",
+                "internalType": "bytes3"
+              },
+              {
+                "name": "nominalValue",
+                "type": "uint256",
+                "internalType": "uint256"
+              },
+              {
+                "name": "nominalValueDecimals",
+                "type": "uint8",
+                "internalType": "uint8"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "name": "regulationData",
+        "type": "tuple",
+        "internalType": "struct IATSFactory.RegulationData",
+        "components": [
+          {
+            "name": "regulationType",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "regulationSubType",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "additionalSecurityData",
+            "type": "tuple",
+            "internalType": "struct IATSFactory.AdditionalSecurityData",
+            "components": [
+              {
+                "name": "countriesControlListType",
+                "type": "bool",
+                "internalType": "bool"
+              },
+              {
+                "name": "listOfCountries",
+                "type": "string",
+                "internalType": "string"
+              },
+              {
+                "name": "info",
+                "type": "string",
+                "internalType": "string"
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "outputs": [
+      {
+        "name": "token",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  }
+]
