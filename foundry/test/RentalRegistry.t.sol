@@ -8,16 +8,16 @@ import {ISemaphore} from "@semaphore-protocol/contracts/interfaces/ISemaphore.so
 import {ISemaphoreVerifier} from "@semaphore-protocol/contracts/interfaces/ISemaphoreVerifier.sol";
 import {Fixture} from "../src/Fixture.sol";
 import {RentalRegistry} from "../src/RentalRegistry.sol";
-import {RoomRights} from "../src/RoomRights.sol";
 import {BrokerIdentityRegistry} from "../src/BrokerIdentityRegistry.sol";
 import {IBrokerIdentity} from "../src/interfaces/IBrokerIdentity.sol";
 import {Roles} from "../src/Roles.sol";
 import {MockUSDC} from "./mocks/MockUSDC.sol";
+import {MockATSFactory, MockATSToken} from "./mocks/MockATS.sol";
 
 contract RentalRegistryTest is Test {
     Semaphore semaphore;
     RentalRegistry reg;
-    RoomRights rights;
+    MockATSFactory factory;
     BrokerIdentityRegistry ids;
     MockUSDC usdc;
 
@@ -46,8 +46,10 @@ contract RentalRegistryTest is Test {
         semaphore = new Semaphore(ISemaphoreVerifier(address(new SemaphoreVerifier())));
         usdc = new MockUSDC();
         ids = new BrokerIdentityRegistry(registrar);
-        reg = new RentalRegistry(semaphore, address(usdc), IBrokerIdentity(address(ids)), registrar, 300);
-        rights = reg.rights();
+        factory = new MockATSFactory();
+        reg = new RentalRegistry(
+            semaphore, address(usdc), IBrokerIdentity(address(ids)), registrar, 300, factory, makeAddr("resolver")
+        );
 
         uint256[] memory c = Fixture.commitments();
         vm.startPrank(registrar);
@@ -63,6 +65,10 @@ contract RentalRegistryTest is Test {
         usdc.approve(address(reg), type(uint256).max);
         vm.prank(brokerB);
         usdc.approve(address(reg), type(uint256).max);
+    }
+
+    function _token(uint256 id) internal view returns (MockATSToken) {
+        return MockATSToken(address(reg.tokenOf(id)));
     }
 
     function _list() internal returns (uint256) {
@@ -105,7 +111,7 @@ contract RentalRegistryTest is Test {
     function test_CreateListingEscrowsToken() public {
         uint256 id = _list();
         assertEq(id, 1);
-        assertEq(rights.ownerOf(id), address(reg));
+        assertEq(_token(id).balanceOf(address(reg)), 1);
         assertEq(uint256(reg.roomState(id)), uint256(RentalRegistry.RoomState.Available));
         RentalRegistry.Listing memory l = reg.getListing(id);
         assertEq(l.price, PRICE);
@@ -140,7 +146,7 @@ contract RentalRegistryTest is Test {
         vm.prank(PAYOUT);
         reg.cancelListing(id);
         assertEq(uint256(reg.roomState(id)), uint256(RentalRegistry.RoomState.Cancelled));
-        assertFalse(rights.exists(id));
+        assertEq(_token(id).totalSupply(), 0);
 
         // the owner must re-apply; the spent proof cannot be reused, by them or anyone else
         vm.expectRevert(ISemaphore.Semaphore__YouAreUsingTheSameNullifierTwice.selector);
@@ -159,12 +165,12 @@ contract RentalRegistryTest is Test {
         vm.warp(END);
         reg.expire(id1);
         assertEq(uint256(reg.roomState(id1)), uint256(RentalRegistry.RoomState.Expired));
-        assertFalse(rights.exists(id1), "old token burned");
+        assertEq(_token(id1).totalSupply(), 0, "old token burned");
 
         uint256 id2 = _reapplyAndList();
         assertEq(id2, 2, "a brand-new token id, minted from scratch");
-        assertTrue(rights.exists(id2));
-        assertEq(rights.ownerOf(id2), address(reg), "escrowed again");
+        assertTrue(address(_token(id2)) != address(_token(id1)), "a fresh token each cycle");
+        assertEq(_token(id2).balanceOf(address(reg)), 1, "escrowed again");
         assertEq(uint256(reg.roomState(id2)), uint256(RentalRegistry.RoomState.Available));
 
         RentalRegistry.Listing memory l = reg.getListing(id2);
@@ -203,7 +209,7 @@ contract RentalRegistryTest is Test {
         reg.buyRoom(id);
 
         assertEq(usdc.balanceOf(PAYOUT) - before, PRICE);
-        assertEq(rights.ownerOf(id), brokerA);
+        assertEq(_token(id).balanceOf(brokerA), 1);
         assertEq(reg.holderOf(id), brokerA);
         assertEq(uint256(reg.roomState(id)), uint256(RentalRegistry.RoomState.Held));
         assertFalse(reg.isValid(id), "period has not started");
@@ -253,7 +259,7 @@ contract RentalRegistryTest is Test {
         vm.prank(brokerA);
         vm.expectRevert(); // allowance underflow in token
         reg.buyRoom(id);
-        assertEq(rights.ownerOf(id), address(reg), "token never left escrow");
+        assertEq(_token(id).balanceOf(address(reg)), 1, "token never left escrow");
         assertEq(uint256(reg.getListing(id).status), uint256(RentalRegistry.Status.Available));
     }
 
@@ -279,12 +285,103 @@ contract RentalRegistryTest is Test {
         uint256 id = _list();
         vm.prank(brokerA);
         reg.buyRoom(id);
+        MockATSToken token = _token(id);
+
+        // Nobody else is on this token's allowlist, not even another verified broker...
         vm.prank(brokerA);
-        vm.expectRevert(RoomRights.TransfersDisabled.selector);
-        rights.transferFrom(brokerA, brokerB, id);
+        vm.expectRevert(abi.encodeWithSelector(MockATSToken.NotCompliant.selector, brokerB));
+        token.transfer(brokerB, 1);
+        // ...and the escrow left it at sale, so the token cannot be handed back either.
         vm.prank(brokerA);
-        vm.expectRevert(RoomRights.NotAgent.selector);
-        rights.agentTransfer(id, brokerB);
+        vm.expectRevert(abi.encodeWithSelector(MockATSToken.NotCompliant.selector, address(reg)));
+        token.transfer(address(reg), 1);
+
+        vm.prank(brokerA);
+        vm.expectRevert();
+        token.forcedTransfer(brokerA, brokerB, 1);
+    }
+
+    // ------------------------------------------------------------ ATS token
+    function test_ListingIssuesItsOwnAtsToken() public {
+        uint256 id = _list();
+        MockATSToken token = _token(id);
+
+        assertEq(factory.issued(), 1);
+        assertEq(token.name(), "RentMeOut Room Rights #1");
+        assertEq(token.decimals(), 0);
+        assertEq(token.maxSupply(), 1);
+        assertEq(token.totalSupply(), 1);
+        assertTrue(token.isWhiteList(), "must be an allowlist, not a denylist");
+        assertTrue(token.isControllable(), "forced transfer needs this");
+        assertTrue(token.isInControlList(address(reg)), "escrow must be allowed to hold it");
+    }
+
+    function test_SaleMovesTheAllowlistToTheBroker() public {
+        uint256 id = _list();
+        vm.prank(brokerA);
+        reg.buyRoom(id);
+
+        assertTrue(_token(id).isInControlList(brokerA));
+        assertFalse(_token(id).isInControlList(address(reg)));
+    }
+
+    function test_RegistrarFreezeReachesTheAtsToken() public {
+        uint256 id = _list();
+        vm.prank(brokerA);
+        reg.buyRoom(id);
+
+        vm.prank(registrar);
+        reg.freezeRoom(id, bytes32("dispute"));
+        assertTrue(_token(id).isFrozen(brokerA), "the broker is frozen on the token itself");
+        assertTrue(reg.isFrozen(id));
+
+        vm.prank(registrar);
+        reg.unfreezeRoom(id, bytes32("resolved"));
+        assertFalse(_token(id).isFrozen(brokerA));
+        assertFalse(reg.isFrozen(id));
+    }
+
+    function test_FrozenEscrowBlocksPurchaseOnTheToken() public {
+        uint256 id = _list();
+        vm.prank(registrar);
+        reg.freezeRoom(id, bytes32("dispute"));
+        assertTrue(_token(id).isFrozen(address(reg)));
+
+        vm.prank(brokerA);
+        vm.expectRevert(RentalRegistry.NotAvailable.selector);
+        reg.buyRoom(id);
+    }
+
+    function test_RedeemedTokenMeansNoHolderAndStillExpires() public {
+        uint256 id = _list();
+        vm.prank(brokerA);
+        reg.buyRoom(id);
+        vm.warp(START + 1);
+        assertEq(reg.holderOf(id), brokerA);
+        assertTrue(reg.isValid(id));
+
+        MockATSToken token = _token(id); // looked up first: vm.prank covers only the next call
+        vm.prank(brokerA);
+        token.redeem(1);
+        assertEq(reg.holderOf(id), address(0), "the token decides who holds the room");
+        assertFalse(reg.isValid(id));
+
+        vm.warp(END + 1);
+        reg.expire(id);
+        assertEq(uint8(reg.roomState(id)), uint8(RentalRegistry.RoomState.Expired));
+    }
+
+    function test_ConstructorRejectsFactoryWithNoCode() public {
+        vm.expectRevert(RentalRegistry.AtsFactoryHasNoCode.selector);
+        new RentalRegistry(
+            semaphore,
+            address(usdc),
+            IBrokerIdentity(address(ids)),
+            registrar,
+            300,
+            MockATSFactory(makeAddr("noCode")),
+            makeAddr("resolver")
+        );
     }
 
     // --------------------------------------------------------------- freeze
@@ -336,9 +433,9 @@ contract RentalRegistryTest is Test {
         uint256[] memory batch = new uint256[](1);
         batch[0] = id;
         reg.expireMany(batch);
-        assertFalse(rights.exists(id));
+        assertEq(_token(id).totalSupply(), 0);
         assertEq(reg.holderOf(id), address(0));
-        assertEq(rights.balanceOf(brokerA), 0);
+        assertEq(_token(id).balanceOf(brokerA), 0);
     }
 
     function test_ExpiredFrozenTokenStillBurns() public {
@@ -349,8 +446,8 @@ contract RentalRegistryTest is Test {
         reg.freezeRoom(id, bytes32(0));
         vm.warp(END);
         reg.expire(id);
-        assertFalse(rights.exists(id));
-        assertFalse(rights.isFrozen(id));
+        assertEq(_token(id).totalSupply(), 0);
+        assertFalse(_token(id).isFrozen(brokerA));
     }
 
     function test_CannotBuyAfterEnd() public {

@@ -252,7 +252,19 @@ export function VerifyClient({
                 </div>
                 <div className="verify-check">
                   <span>Token</span>
-                  <span className="mono">{room.tokenId}</span>
+                  <span className="mono">
+                    {room.tokenAddress ? (
+                      <a
+                        href={`https://hashscan.io/testnet/contract/${room.tokenAddress}`}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        {room.tokenId}
+                      </a>
+                    ) : (
+                      room.tokenId
+                    )}
+                  </span>
                 </div>
                 <div className="verify-check">
                   <span>Purchase transaction</span>

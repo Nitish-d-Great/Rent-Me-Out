@@ -25,7 +25,7 @@ export const REGISTRY_ABI = parseAbi([
   "function listingCount() view returns (uint256)",
   "function listingsOfRoom(uint256 roomTag) view returns (uint256[])",
   "function usdc() view returns (address)",
-  "function rights() view returns (address)",
+  "function tokenOf(uint256 listingId) view returns (address)",
   "function rootVersion() view returns (uint256)",
   "function approvedRoot() view returns (uint256, uint256)",
   "function listingMessage(uint256 room, uint64 start, uint64 end, uint256 price, address payout) view returns (uint256)",
@@ -58,6 +58,8 @@ export interface RoomRecord {
   /** DemoUSDC uses 6 decimals, like real USDC. */
   price: string;
   roomTag: string;
+  /** The room's own ATS security token, issued when it was listed. */
+  token: `0x${string}`;
 }
 
 export function registryAddress(): `0x${string}` {
@@ -73,6 +75,26 @@ export function publicClient() {
 const ZERO = "0x0000000000000000000000000000000000000000";
 
 /**
+ * A listing's token never changes once issued, so one read is enough for the life of the
+ * process. Without this, every room on a page would pay one more RPC call on each load.
+ */
+const tokenCache = new Map<string, `0x${string}`>();
+
+async function readTokenOf(
+  registry: `0x${string}`,
+  listingId: bigint,
+): Promise<`0x${string}`> {
+  const key = `${registry}:${listingId}`;
+  const cached = tokenCache.get(key);
+  if (cached) return cached;
+  const token = await publicClient().readContract({
+    address: registry, abi: REGISTRY_ABI, functionName: "tokenOf", args: [listingId],
+  });
+  tokenCache.set(key, token);
+  return token;
+}
+
+/**
  * One call gives the tenant page everything: state, validity, holder, period, price.
  * `verifyRoom` exists for exactly this, so we don't stitch several reads together.
  *
@@ -84,7 +106,7 @@ export async function readRoom(listingId: bigint): Promise<RoomRecord | null> {
   try {
     // Both reads go out together: done in sequence this costs two round trips per
     // room, which multiplies across a page that lists several.
-    const [room, identity] = await Promise.all([
+    const [room, identity, token] = await Promise.all([
       publicClient().readContract({
         address, abi: REGISTRY_ABI, functionName: "verifyRoom", args: [listingId],
       }),
@@ -94,6 +116,7 @@ export async function readRoom(listingId: bigint): Promise<RoomRecord | null> {
         })
         // Optional: an unsold room has no identity bound.
         .catch(() => 0n),
+      readTokenOf(address, listingId),
     ]);
 
     const [state, valid, holder, start, end, price, roomTag] = room;
@@ -110,6 +133,7 @@ export async function readRoom(listingId: bigint): Promise<RoomRecord | null> {
       priceRaw: price.toString(),
       price: (Number(price) / 1e6).toFixed(2),
       roomTag: roomTag.toString(),
+      token,
     };
   } catch {
     return null;

@@ -93,7 +93,19 @@ export default async function RoomDetailPage({ params }: PageProps) {
               </div>
               <div>
                 <span className="micro">Token · supply 1</span>
-                <strong className="mono">{room.tokenId}</strong>
+                <strong className="mono">
+                  {room.tokenAddress ? (
+                    <a
+                      href={`https://hashscan.io/testnet/contract/${room.tokenAddress}`}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      {room.tokenId}
+                    </a>
+                  ) : (
+                    room.tokenId
+                  )}
+                </strong>
               </div>
               <div>
                 <span className="micro">Valid until</span>

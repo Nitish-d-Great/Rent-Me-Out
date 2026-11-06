@@ -40,7 +40,7 @@ const ABI = parseAbi([
 const APPROVED_EV = parseAbiItem("event PropertyApproved(bytes32 indexed applicationId, uint256 indexed commitment, uint256 rootVersion, uint256 root)");
 const REVOKED_EV  = parseAbiItem("event PropertyRevoked(uint256 indexed commitment, uint256 rootVersion, uint256 root)");
 
-const GAS = 8_000_000n;
+const GAS = 10_000_000n; // createListing also issues the ATS token, about 7.9M gas
 const account = privateKeyToAccount(env.REGISTRAR_PRIVATE_KEY);
 const pub = createPublicClient({ chain, transport: http() });
 const wallet = createWalletClient({ account, chain, transport: http() });

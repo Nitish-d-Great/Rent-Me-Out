@@ -38,7 +38,9 @@ const CREATE_LISTING_ABI = [
   { type: "error", name: "InvalidPayout", inputs: [] },
 ] as const;
 
-const GAS = 8_000_000n;
+// A listing issues its ATS token in the same transaction, which measured about 7.9M gas
+// on testnet. The limit needs headroom, because the proof check grows with the group.
+const GAS = 10_000_000n;
 
 interface ProofBody {
   merkleTreeDepth: string; merkleTreeRoot: string; nullifier: string;
