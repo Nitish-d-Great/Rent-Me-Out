@@ -25,6 +25,8 @@ const REASON_COPY: Record<string, string> = {
   rights_not_valid: "These rights are frozen or outside their period.",
   session_not_holder: "This person is not the broker who holds these rights.",
   no_session_on_this_device: "The broker has not verified on the device they used.",
+  session_binding_unsupported:
+    "Live broker checks are not available yet on this deployment. The rights shown above are still read from Hedera.",
   cancelled: "The broker cancelled the check.",
   "receipt_nonce-mismatch": "That code was issued for a different check. Ask for a fresh one.",
   "receipt_room-mismatch": "That code was issued for a different room.",
