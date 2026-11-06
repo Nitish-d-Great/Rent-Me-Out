@@ -284,6 +284,14 @@ contract RentalRegistry is Roles {
         return s == Status.Sold ? rights.ownerOf(listingId) : address(0);
     }
 
+    /// World ID nullifier hash of the current holder (0 if there is no holder). The tenant
+    /// verify page compares it with the nullifier of the World ID proof of presence that the
+    /// person on site completes. Both must come from the same World ID action.
+    function holderIdentity(uint256 listingId) external view returns (uint256) {
+        address holder = holderOf(listingId);
+        return holder == address(0) ? 0 : identity.identityOf(holder);
+    }
+
     function roomState(uint256 listingId) public view returns (RoomState) {
         if (listingId == 0 || listingId > listingCount) return RoomState.Unknown;
         Listing storage l = _listings[listingId];

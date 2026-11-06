@@ -150,6 +150,17 @@ contract RentalRegistryTest is Test {
         assertEq(holder, brokerA);
     }
 
+    function test_HolderIdentityMatchesBrokerNullifier() public {
+        uint256 id = _list();
+        assertEq(reg.holderIdentity(id), 0, "no holder before sale");
+        vm.prank(brokerA);
+        reg.buyRoom(id);
+        assertEq(reg.holderIdentity(id), 111, "nullifier registered for brokerA");
+        vm.warp(END);
+        reg.expire(id);
+        assertEq(reg.holderIdentity(id), 0, "no holder after expiry");
+    }
+
     function test_UnverifiedBrokerBlocked() public {
         uint256 id = _list();
         vm.prank(brokerB);

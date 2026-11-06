@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "skills": {
+    "Hedera Hackathon PRD": {
+      "source": "hedera-dev/hedera-skills",
+      "sourceType": "github",
+      "skillPath": "plugins/hackathon-helper/skills/hackathon-prd/SKILL.md",
+      "computedHash": "04a27c0bc1abfc5f280d4a4924b78ee3a7ed1479b0748a320454a8a6f8ecdb28"
+    },
+    "Hedera Hackathon Submission Validator": {
+      "source": "hedera-dev/hedera-skills",
+      "sourceType": "github",
+      "skillPath": "plugins/hackathon-helper/skills/validate-submission/SKILL.md",
+      "computedHash": "1031b8d9e3936fad93269855d35932c2d61e28a6c54bcbeb1aa126225da366ea"
+    },
+    "agent-kit-plugin": {
+      "source": "hedera-dev/hedera-skills",
+      "sourceType": "github",
+      "skillPath": "plugins/agent-kit-plugin/skills/agent-kit-plugin/SKILL.md",
+      "computedHash": "b368e88e8c14b592ee55a3bb5d1667708bfb71c0638c401516510f0c227589c5"
+    },
+    "hts-system-contract": {
+      "source": "hedera-dev/hedera-skills",
+      "sourceType": "github",
+      "skillPath": "plugins/system-contracts/skills/hts-system-contract/SKILL.md",
+      "computedHash": "b955e168bdee09f911305a838a58642c2b7af3727e01920f0d9890abc9f2fc96"
+    }
+  }
+}
