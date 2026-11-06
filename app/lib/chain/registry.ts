@@ -215,13 +215,24 @@ export function invalidateRooms(): void {
   rootVersionCache = null;
 }
 
-/** Every listing the registry knows about. Listing ids are 1-indexed. */
+/**
+ * Every listing the registry knows about. Listing ids are 1-indexed.
+ *
+ * Reading them all took 29-47s on Hashio with only three rooms, so nobody should have to
+ * wait for it twice. Once the window passes, callers get the last answer immediately
+ * while a refresh runs behind them. A write calls invalidateRooms(), which drops the
+ * cache, so a change someone just made is never hidden by the stale copy.
+ */
 export async function readAllRooms(): Promise<RoomRecord[]> {
-  if (roomsCache && Date.now() - roomsCache.at < ROOMS_TTL_MS) {
+  if (roomsCache) {
+    if (Date.now() - roomsCache.at >= ROOMS_TTL_MS) void refreshRooms().catch(() => undefined);
     return roomsCache.rooms;
   }
-  if (roomsInFlight) return roomsInFlight;
+  return refreshRooms();
+}
 
+function refreshRooms(): Promise<RoomRecord[]> {
+  if (roomsInFlight) return roomsInFlight;
   roomsInFlight = readAllRoomsUncached()
     .then((rooms) => {
       roomsCache = { at: Date.now(), rooms };
