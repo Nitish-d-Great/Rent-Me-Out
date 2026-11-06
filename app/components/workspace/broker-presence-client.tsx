@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
+import { QRCodeSVG } from "qrcode.react";
 import { QRPanel } from "@/components/ui/qr-panel";
 import { provePresence, storedSessionId } from "@/lib/world/client";
 import { decodeChallenge } from "@/lib/world/link";
@@ -25,6 +26,7 @@ export function BrokerPresenceClient() {
   const [receipt, setReceipt] = useState<string | null>(null);
   const [matched, setMatched] = useState<boolean | null>(null);
   const [reason, setReason] = useState<string | null>(null);
+  const [connectorUri, setConnectorUri] = useState<string | null>(null);
 
   useEffect(() => {
     const encoded = params.get("c");
@@ -48,7 +50,8 @@ export function BrokerPresenceClient() {
   const prove = async () => {
     if (!challenge) return;
     setPhase("proving");
-    const outcome = await provePresence(challenge.roomId, challenge);
+    const outcome = await provePresence(challenge.roomId, challenge, setConnectorUri);
+    setConnectorUri(null);
     setMatched(outcome.match);
     setReason(outcome.reason ?? null);
     setReceipt(outcome.receipt ?? null);
@@ -81,9 +84,8 @@ export function BrokerPresenceClient() {
         <div>
           <strong>No verification on this device.</strong>
           <p>
-            Your World ID session lives on the device where you verified. Open this link
-            on that device, or verify again here — verifying again issues a new session
-            and does not affect the rooms you already hold.
+            Your World ID session is saved in the browser where you verified. Open this
+            link in that browser.
           </p>
         </div>
       </div>
@@ -118,6 +120,21 @@ export function BrokerPresenceClient() {
     );
   }
 
+  if (phase === "proving" && connectorUri) {
+    return (
+      <div className="notice">
+        <div style={{ flex: 1 }}>
+          <strong>Scan with your World app</strong>
+          <p>Approve on your phone. This page updates on its own.</p>
+          {/* QR only: this URI can carry the bridge encryption key, so it is never shown as text. */}
+          <div style={{ background: "#fff", display: "inline-block", marginTop: 12, padding: 12 }}>
+            <QRCodeSVG value={connectorUri} size={224} level="M" />
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="notice">
       <div style={{ flex: 1 }}>
@@ -133,7 +150,7 @@ export function BrokerPresenceClient() {
             disabled={phase === "proving"}
             onClick={() => void prove()}
           >
-            {phase === "proving" ? "Verifying…" : "Complete World ID check"}
+            {phase === "proving" ? "Preparing…" : "Complete World ID check"}
           </button>
         </div>
       </div>

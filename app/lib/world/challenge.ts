@@ -61,6 +61,31 @@ export function verifyChallenge(
   return { ok: true };
 }
 
+/**
+ * Ties a World ID request's nonce to one viewing's challenge. World's signing library
+ * always generates its own nonce, so the challenge's nonce cannot go in the proof itself.
+ */
+export function bindRequestToChallenge(
+  secret: string,
+  challenge: Challenge,
+  requestNonce: string,
+): string {
+  return createHmac("sha256", secret)
+    .update(`request|${challenge.roomId}|${challenge.nonce}|${requestNonce}`)
+    .digest("hex");
+}
+
+export function isRequestBoundToChallenge(
+  secret: string,
+  challenge: Challenge,
+  requestNonce: string,
+  binding: string,
+): boolean {
+  const expected = Buffer.from(bindRequestToChallenge(secret, challenge, requestNonce), "hex");
+  const given = Buffer.from(binding, "hex");
+  return given.length === expected.length && timingSafeEqual(given, expected);
+}
+
 /* -------------------------------------------------------------------------- */
 /* Signed receipts                                                             */
 /* -------------------------------------------------------------------------- */

@@ -25,6 +25,7 @@ const REASON_COPY: Record<string, string> = {
   rights_not_valid: "These rights are frozen or outside their period.",
   session_not_holder: "This person is not the broker who holds these rights.",
   no_session_on_this_device: "The broker has not verified on the device they used.",
+  proof_not_for_this_check: "That proof was not made for this check. Ask for a fresh one.",
   session_binding_unsupported:
     "Live broker checks are not available yet on this deployment. The rights shown above are still read from Hedera.",
   cancelled: "The broker cancelled the check.",
@@ -144,6 +145,17 @@ export function PresenceCheck({ roomId }: { roomId: string }) {
             title="Broker check"
             note="The broker scans this with their own phone and completes a fresh World ID check."
           />
+        )}
+        {challenge && (
+          <a
+            href={brokerPresenceUrl(challenge)}
+            target="_blank"
+            rel="noreferrer"
+            className="text-link micro"
+            style={{ display: "inline-block", marginTop: 10 }}
+          >
+            Broker using this computer? Open the check here
+          </a>
         )}
 
         <div style={{ marginTop: 18 }}>

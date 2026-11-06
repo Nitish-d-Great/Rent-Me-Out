@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import {
+  isRequestBoundToChallenge,
   issueReceipt,
   sessionKey,
   serverConfig,
@@ -56,6 +57,8 @@ export async function POST(
   const body = (await request.json()) as {
     challenge?: SignedChallenge;
     result?: SessionResult;
+    /** From /request. Proves the proof's nonce was issued for this challenge. */
+    binding?: string;
   };
 
   const { challengeSecret } = serverConfig();
@@ -77,7 +80,7 @@ export async function POST(
 
   const fail = (reason: string, status = 200) => respond(false, reason, status);
 
-  if (!body.challenge || !body.result) {
+  if (!body.challenge || !body.result || !body.binding) {
     return fail("malformed_request", 400);
   }
 
@@ -85,6 +88,16 @@ export async function POST(
   const challengeCheck = verifyChallenge(challengeSecret, body.challenge, roomId);
   if (!challengeCheck.ok) {
     return fail(`challenge_${challengeCheck.reason}`);
+  }
+
+  // The proof carries World's nonce, so this viewing is enforced by the binding: a proof
+  // captured at another viewing is bound to that viewing's challenge.
+  if (
+    !isRequestBoundToChallenge(
+      challengeSecret, body.challenge, body.result.nonce ?? "", body.binding,
+    )
+  ) {
+    return fail("proof_not_for_this_check");
   }
 
   // 2. can the deployed registry answer this at all?
@@ -104,8 +117,8 @@ export async function POST(
     return fail("rights_not_valid");
   }
 
-  // 4. World verification, bound to this viewing's nonce
-  const verified = await verifySessionProof(body.result, body.challenge.nonce);
+  // 4. World verification.
+  const verified = await verifySessionProof(body.result, body.result.nonce);
   if (!verified.ok) {
     return fail(`proof_${verified.code}`);
   }

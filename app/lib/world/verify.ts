@@ -142,13 +142,9 @@ export async function verifyUniqueness(
  * so there is no plaintext session ID server-side to compare against -- the binding
  * check is the on-chain hash lookup in step 2.
  *
- * `expectedNonce` is the replay defence. The viewing challenge is single-use by virtue
- * of being freshly random per viewing, so a captured proof from an earlier viewing
- * carries a stale nonce and fails here.
- *
- * CAVEAT: the World docs do not explicitly state that the nonce on the IDKit result
- * equals the `rp_context` nonce, though the field naming implies it. If this check ever
- * rejects a known-good proof, that assumption is where to look first.
+ * `expectedNonce` is the nonce this request was issued with. The route has already
+ * checked that it is bound to this viewing's challenge, which is the replay defence: a
+ * proof captured at an earlier viewing is bound to that viewing's challenge instead.
  */
 export async function verifySessionProof(
   result: SessionResult,

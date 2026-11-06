@@ -134,6 +134,9 @@ export type EnrollFailure =
   | "server_error"
   | "network";
 
+/** IDKit's codes for a person saying no, as opposed to the request failing. */
+const USER_DECLINED = new Set(["cancelled", "user_rejected", "verification_rejected"]);
+
 export class WorldError extends Error {
   constructor(
     readonly kind: EnrollFailure,
@@ -193,7 +196,7 @@ export async function enroll(
       const code = String(completion.error ?? "unknown");
       console.error("[world] IDKit did not complete:", code);
       throw new WorldError(
-        code.includes("cancel") || code.includes("dismiss") ? "cancelled" : "idkit_failed",
+        USER_DECLINED.has(code) ? "cancelled" : "idkit_failed",
         code,
       );
     }
@@ -260,6 +263,8 @@ export interface TenantResult {
 export async function provePresence(
   roomId: string,
   challenge: SignedChallenge,
+  /** Called with IDKit's connector URI. Render as a QR only: it carries the bridge key. */
+  onConnectorUri?: (uri: string) => void,
 ): Promise<PresenceOutcome> {
   const sessionId = storedSessionId();
   if (!sessionId?.startsWith("session_")) {
@@ -267,7 +272,22 @@ export async function provePresence(
   }
 
 
-  const context = await rpContext();
+  const requestRes = await fetch(
+    `/api/presence/${encodeURIComponent(roomId)}/request`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ challenge }),
+    },
+  ).catch(() => null);
+  if (!requestRes?.ok) {
+    const failure = (await requestRes?.json().catch(() => null)) as { error?: string } | null;
+    return { match: false, reason: failure?.error ?? "network" };
+  }
+  const { context, binding } = (await requestRes.json()) as {
+    context: RpContext;
+    binding: string;
+  };
 
   let result: unknown;
   try {
@@ -277,15 +297,23 @@ export async function provePresence(
       environment: WORLD_ENVIRONMENT,
     }).constraints(CREDENTIAL());
 
+    onConnectorUri?.(request.connectorURI);
+
     if (DEV_SIMULATOR) await completeViaSimulator(request.connectorURI);
 
     const completion = await request.pollUntilCompletion({
       timeout: POLL_TIMEOUT_MS,
     });
-    if (!completion.success) return { match: false, reason: "cancelled" };
+    if (!completion.success) {
+      const code = String(completion.error ?? "unknown");
+      console.error("[world] session proof did not complete:", code);
+      return { match: false, reason: USER_DECLINED.has(code) ? "cancelled" : code };
+    }
     result = completion.result;
-  } catch {
-    return { match: false, reason: "cancelled" };
+  } catch (error) {
+    // A broken request is not the broker declining, so it must not read as "cancelled".
+    console.error("[world] session proof threw:", error);
+    return { match: false, reason: "world_request_failed" };
   }
 
   const res = await fetch(
@@ -293,7 +321,7 @@ export async function provePresence(
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ challenge, result }),
+      body: JSON.stringify({ challenge, result, binding }),
     },
   );
 
