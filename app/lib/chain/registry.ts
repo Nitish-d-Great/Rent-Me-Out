@@ -140,6 +140,25 @@ export async function readRoom(listingId: bigint): Promise<RoomRecord | null> {
   }
 }
 
+/** The contract's Status enum: Available and Sold still hold a token. */
+const STATUS_AVAILABLE = 1;
+const STATUS_SOLD = 2;
+
+/**
+ * Whether a listing still has a token to burn.
+ *
+ * This reads the stored status on purpose. verifyRoom reports "expired" as soon as a
+ * period ends, before anyone has called expire(), so it cannot tell a burned token from
+ * one still waiting to be burned.
+ */
+export async function hasLiveToken(listingId: bigint): Promise<boolean> {
+  const listing = await publicClient().readContract({
+    address: registryAddress(), abi: REGISTRY_ABI, functionName: "getListing", args: [listingId],
+  });
+  const status = listing[3];
+  return status === STATUS_AVAILABLE || status === STATUS_SOLD;
+}
+
 /**
  * Current approved-set root version, shown on the verify page.
  *

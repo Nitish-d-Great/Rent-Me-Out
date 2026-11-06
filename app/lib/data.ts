@@ -301,6 +301,11 @@ export function formatUsdc(value: number): string {
   }).format(value);
 }
 
+/** A room's own rights period, for sample and on-chain rooms alike. */
+export function periodLabel(room: Pick<Room, "validFrom" | "validUntil">): string {
+  return `${formatDate(room.validFrom)} – ${formatDate(room.validUntil)}`;
+}
+
 export function formatDate(value: string): string {
   return new Intl.DateTimeFormat("en-IN", {
     day: "numeric",

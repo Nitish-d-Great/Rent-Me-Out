@@ -1,6 +1,7 @@
-import { BaseError, ContractFunctionRevertedError, type Hex } from "viem";
+import { BaseError, ContractFunctionRevertedError, parseAbi, type Hex } from "viem";
 import {
   BROKER_IDENTITY_ABI,
+  ChainNotConfigured,
   WRITE_GAS,
   brokerIdentityAddress,
   publicClient,
@@ -236,6 +237,61 @@ export const brokerIdentityRegistry: IdentityBindings = {
       abi: BROKER_IDENTITY_ABI,
       functionName: "sessionMatchesHolder",
       args: [sessionKey, holder],
+    });
+  },
+};
+
+/* -------------------------------------------------------------------------- */
+/* Live adapter — RentalRegistry on Hedera testnet                              */
+/* -------------------------------------------------------------------------- */
+
+const ROOM_RIGHTS_ABI = parseAbi([
+  "function holderOf(uint256 listingId) view returns (address)",
+  "function isValid(uint256 listingId) view returns (bool)",
+  "error NoSuchListing()",
+]);
+
+/** Listing ids are numbers. Sample rooms use ids like "r2", which are not on-chain. */
+function listingIdOf(roomId: string): bigint | null {
+  return /^\d+$/.test(roomId) ? BigInt(roomId) : null;
+}
+
+function rentalRegistryAddress(): `0x${string}` {
+  const value = process.env.RENTAL_REGISTRY_ADDRESS;
+  if (!value) throw new ChainNotConfigured("RENTAL_REGISTRY_ADDRESS");
+  return value as `0x${string}`;
+}
+
+/**
+ * Only a room that does not exist reads as having no holder. Any other failure still
+ * throws: a tenant must never be told a broker holds no rights because an RPC call failed.
+ */
+export const rentalRegistryRights: RoomRights = {
+  async holderOf(roomId) {
+    const listingId = listingIdOf(roomId);
+    if (listingId === null) return null;
+    try {
+      const holder = await publicClient().readContract({
+        address: rentalRegistryAddress(),
+        abi: ROOM_RIGHTS_ABI,
+        functionName: "holderOf",
+        args: [listingId],
+      });
+      return holder === ZERO_ADDRESS ? null : holder;
+    } catch (error) {
+      if (revertName(error) === "NoSuchListing") return null;
+      throw error;
+    }
+  },
+
+  async isValid(roomId) {
+    const listingId = listingIdOf(roomId);
+    if (listingId === null) return false;
+    return publicClient().readContract({
+      address: rentalRegistryAddress(),
+      abi: ROOM_RIGHTS_ABI,
+      functionName: "isValid",
+      args: [listingId],
     });
   },
 };

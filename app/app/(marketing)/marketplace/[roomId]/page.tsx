@@ -7,13 +7,14 @@ import { StatusStamp } from "@/components/ui/status-stamp";
 import {
   demo,
   formatDate,
+  periodLabel,
   formatUsdc,
   property,
   rooms,
   type Room,
 } from "@/lib/data";
 import { readRoom } from "@/lib/chain/registry";
-import { recordToRoom } from "@/lib/chain/to-room";
+import { recordToRoom, shortAddress } from "@/lib/chain/to-room";
 
 /**
  * A numeric id is a real listing, read from the registry. Anything else is one of the
@@ -79,7 +80,7 @@ export default async function RoomDetailPage({ params }: PageProps) {
             <div className="detail-meta">
               <div>
                 <span className="micro">Rights period</span>
-                <strong>{demo.periodLabel}</strong>
+                <strong>{periodLabel(room)}</strong>
               </div>
               <div>
                 <span className="micro">One-time price</span>
@@ -151,7 +152,7 @@ export default async function RoomDetailPage({ params }: PageProps) {
                       </strong>
                       <span>
                         {room.state === "held"
-                          ? `Holder ${demo.brokerShort} · settled ${formatDate("2027-01-02")}`
+                          ? `Holder ${room.holder ? shortAddress(room.holder) : "unknown"}`
                           : "Buying is restricted to wallets on the ATS verified list"}
                       </span>
                     </div>
@@ -191,7 +192,7 @@ export default async function RoomDetailPage({ params }: PageProps) {
                 Open public verification page
               </Link>
               <span className="mono dim" style={{ fontSize: 10.5 }}>
-                {demo.nullifierShort}
+                {room.holderNullifier ?? ""}
               </span>
             </div>
           </div>

@@ -26,6 +26,16 @@
         "name": "rootWindow",
         "type": "uint256",
         "internalType": "uint256"
+      },
+      {
+        "name": "atsFactory_",
+        "type": "address",
+        "internalType": "contract IATSFactory"
+      },
+      {
+        "name": "atsResolver_",
+        "type": "address",
+        "internalType": "address"
       }
     ],
     "stateMutability": "nonpayable"
@@ -62,6 +72,32 @@
         "name": "version",
         "type": "uint256",
         "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "atsFactory",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "contract IATSFactory"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "atsResolver",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
       }
     ],
     "stateMutability": "view"
@@ -324,6 +360,25 @@
   },
   {
     "type": "function",
+    "name": "isFrozen",
+    "inputs": [
+      {
+        "name": "listingId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "isRegistrar",
     "inputs": [
       {
@@ -482,19 +537,6 @@
   },
   {
     "type": "function",
-    "name": "rights",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "address",
-        "internalType": "contract RoomRights"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "roomState",
     "inputs": [
       {
@@ -593,6 +635,25 @@
     ],
     "outputs": [],
     "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "tokenOf",
+    "inputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "contract IATSToken"
+      }
+    ],
+    "stateMutability": "view"
   },
   {
     "type": "function",
@@ -933,6 +994,25 @@
   },
   {
     "type": "event",
+    "name": "RoomTokenIssued",
+    "inputs": [
+      {
+        "name": "listingId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "token",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "RoomUnfrozen",
     "inputs": [
       {
@@ -959,6 +1039,11 @@
   {
     "type": "error",
     "name": "AlreadyFrozen",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "AtsFactoryHasNoCode",
     "inputs": []
   },
   {

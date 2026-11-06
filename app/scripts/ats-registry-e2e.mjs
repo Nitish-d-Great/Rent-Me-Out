@@ -15,7 +15,7 @@ import { readFileSync } from "node:fs";
 import { Group, Identity, generateProof } from "@semaphore-protocol/core";
 import {
   createPublicClient, createWalletClient, defineChain, encodePacked, http, keccak256,
-  parseAbi, parseAbiItem,
+  parseAbi, parseAbiItem, toFunctionSelector,
 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 
@@ -27,8 +27,12 @@ const env = Object.fromEntries(
 
 const REGISTRY = process.env.REGISTRY ?? env.RENTAL_REGISTRY_ADDRESS;
 const send = process.argv.includes("--send");
-/** Long enough to buy, freeze and unfreeze before the period ends. */
-const PERIOD_SECONDS = 420;
+/**
+ * Long enough to buy, freeze and unfreeze before the period ends, even when Hashio is
+ * slow: one run took 5.5 minutes just from listing to purchase. The run waits this out
+ * to test expiry, so PERIOD_SECONDS can shorten it when the network is healthy.
+ */
+const PERIOD_SECONDS = Number(process.env.PERIOD_SECONDS ?? 1800);
 /** Issuing the ATS token inside a listing measured about 7.9M gas. */
 const LISTING_GAS = 10_000_000n;
 const GAS = 8_000_000n;
@@ -56,6 +60,7 @@ const REG_ABI = parseAbi([
   "function isFrozen(uint256 listingId) view returns (bool)",
   "function roomState(uint256 listingId) view returns (uint8)",
   "function usdc() view returns (address)",
+  "function identity() view returns (address)",
   "error BrokerNotVerified()",
   "error NotAvailable()",
   "error NotYetExpired()",
@@ -72,6 +77,7 @@ const ATS_ABI = parseAbi([
   "function hasRole(bytes32 role, address account) view returns (bool)",
   "function transfer(address to, uint256 amount) returns (bool)",
 ]);
+const IDENTITY_ABI = parseAbi(["function isVerified(address) view returns (bool)"]);
 const USDC_ABI = parseAbi([
   "function balanceOf(address) view returns (uint256)",
   "function allowance(address,address) view returns (uint256)",
@@ -80,9 +86,14 @@ const USDC_ABI = parseAbi([
 ]);
 const APPROVED_EV = parseAbiItem("event PropertyApproved(bytes32 indexed applicationId, uint256 indexed commitment, uint256 rootVersion, uint256 root)");
 
+const BROKER_NOT_VERIFIED = "0x71f75b51";
+const NOT_YET_EXPIRED = toFunctionSelector("NotYetExpired()");
 const ROLE_AGENT = "0x9830aa071a741c08855dd42130bdb0ff50f7bdf5a4b72f12181eefded0c6542b";
 const ROLE_ADMIN = `0x${"00".repeat(32)}`;
-const UNVERIFIED = "0x00000000000000000000000000000000DeaDBeef";
+// A recipient only: it does not exist on Hedera, so it cannot send a simulated call.
+const STRANGER = "0x00000000000000000000000000000000DeaDBeef";
+// Account 0.0.2 exists but is not a verified broker, so it can stand in as a buyer.
+const UNVERIFIED_BUYER = "0x0000000000000000000000000000000000000002";
 
 const account = privateKeyToAccount(env.REGISTRAR_PRIVATE_KEY);
 // Hashio returns 502s often enough to matter. Retrying is safe for writes too: the same
@@ -107,7 +118,12 @@ async function reverts(address, abi, functionName, args, from) {
     await pub.simulateContract({ address, abi, functionName, args, account: from, gas: GAS });
     return { reverted: false, why: "" };
   } catch (error) {
-    return { reverted: true, why: String(error.shortMessage ?? error).split("\n")[0].slice(0, 80) };
+    // Hashio can return only the error's selector, which viem's short message leaves out,
+    // so the decoded name has to be looked for further down the error chain.
+    const decoded = error.walk?.((e) => e?.data?.errorName !== undefined)?.data?.errorName;
+    const selector = error.walk?.((e) => typeof e?.data === "string")?.data;
+    const why = decoded ?? selector ?? String(error.shortMessage ?? error).split("\n")[0];
+    return { reverted: true, why: why.slice(0, 80) };
   }
 }
 
@@ -200,8 +216,17 @@ check("listed, with no holder yet", (await reg("holderOf", [id])) === "0x0000000
 
 // ------------------------------------------------------------------------- buy
 console.log("\n3. an unverified wallet cannot buy");
-const blocked = await reverts(REGISTRY, REG_ABI, "buyRoom", [id], UNVERIFIED);
-check("buyRoom reverts", blocked.reverted && blocked.why.includes("BrokerNotVerified"), blocked.why);
+const identity = await reg("identity");
+check(
+  "the stand-in buyer really is unverified",
+  !(await read(identity, IDENTITY_ABI, "isVerified", [UNVERIFIED_BUYER])),
+);
+const blocked = await reverts(REGISTRY, REG_ABI, "buyRoom", [id], UNVERIFIED_BUYER);
+check(
+  "buyRoom reverts with BrokerNotVerified",
+  blocked.reverted && (blocked.why === "BrokerNotVerified" || blocked.why.startsWith(BROKER_NOT_VERIFIED)),
+  blocked.why,
+);
 
 console.log("\n4. a verified broker buys");
 const USDC = await reg("usdc");
@@ -222,7 +247,7 @@ check("the broker is allowlisted", await ats("isInControlList", [account.address
 check("the escrow left the allowlist", !(await ats("isInControlList", [REGISTRY])));
 
 console.log("\n5. the holder cannot resell");
-const resale = await reverts(TOKEN, ATS_ABI, "transfer", [UNVERIFIED, 1n], account);
+const resale = await reverts(TOKEN, ATS_ABI, "transfer", [STRANGER, 1n], account);
 check("transfer to a stranger reverts", resale.reverted, resale.why);
 const handBack = await reverts(TOKEN, ATS_ABI, "transfer", [REGISTRY, 1n], account);
 check("transfer back to the registry reverts", handBack.reverted, handBack.why);
@@ -232,16 +257,26 @@ console.log("\n6. the registrar freezes the room");
 const reason = keccak256(encodePacked(["string"], ["e2e dispute"]));
 await write("freezeRoom", REGISTRY, REG_ABI, "freezeRoom", [id, reason]);
 check("the holder is frozen on the ATS token", await ats("isFrozen", [account.address]));
+check("the registry reads it as frozen", await reg("isFrozen", [id]));
+check("the token is no longer spendable", (await ats("balanceOf", [account.address])) === 0n);
+check("the broker is still the holder", (await reg("holderOf", [id])) === account.address);
 check("the room is no longer valid", !(await reg("isValid", [id])));
+const whileFrozen = await reverts(TOKEN, ATS_ABI, "transfer", [account.address, 1n], account);
+check("the holder cannot move a frozen token", whileFrozen.reverted, whileFrozen.why);
 
 await write("unfreezeRoom", REGISTRY, REG_ABI, "unfreezeRoom", [id, reason]);
 check("the holder is unfrozen on the ATS token", !(await ats("isFrozen", [account.address])));
+check("the token is spendable again", (await ats("balanceOf", [account.address])) === 1n);
 check("the room is valid again", await reg("isValid", [id]));
 
 // ---------------------------------------------------------------------- expire
 console.log("\n7. the period ends and the token is burned");
 const early = await reverts(REGISTRY, REG_ABI, "expire", [id], account);
-check("expire before the end reverts", early.reverted && early.why.includes("NotYetExpired"), early.why);
+check(
+  "expire before the end reverts with NotYetExpired",
+  early.reverted && (early.why === "NotYetExpired" || early.why.startsWith(NOT_YET_EXPIRED)),
+  early.why,
+);
 
 const waitMs = (Number(terms.end) + 15) * 1000 - Date.now();
 if (waitMs > 0) {

@@ -332,12 +332,21 @@ contract RentalRegistryTest is Test {
 
         vm.prank(registrar);
         reg.freezeRoom(id, bytes32("dispute"));
-        assertTrue(_token(id).isFrozen(brokerA), "the broker is frozen on the token itself");
+        MockATSToken token = _token(id);
+        assertTrue(token.isFrozen(brokerA), "the broker is frozen on the token itself");
+        assertEq(token.getFrozenTokens(brokerA), 1);
+        assertEq(token.balanceOf(brokerA), 0, "a frozen token is not spendable");
         assertTrue(reg.isFrozen(id));
+        assertEq(reg.holderOf(id), brokerA, "freezing does not change who holds the room");
+
+        vm.prank(brokerA);
+        vm.expectRevert(MockATSToken.InsufficientBalance.selector);
+        token.transfer(brokerA, 1);
 
         vm.prank(registrar);
         reg.unfreezeRoom(id, bytes32("resolved"));
-        assertFalse(_token(id).isFrozen(brokerA));
+        assertFalse(token.isFrozen(brokerA));
+        assertEq(token.balanceOf(brokerA), 1, "spendable again");
         assertFalse(reg.isFrozen(id));
     }
 

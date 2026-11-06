@@ -66,6 +66,10 @@ export async function proveListing(terms: ListingTerms): Promise<ListingProof> {
   if (!res.ok) throw new Error("group_unavailable");
   const { members, root } = (await res.json()) as { members: string[]; root: string };
 
+  // Checked here because Semaphore's own failure for this case reaches the owner as a
+  // generic error, when what they need to know is that they must get approved.
+  if (!members.includes(record.commitment)) throw new Error("not_approved");
+
   const group = new Group(members);
   if (group.root.toString() !== root) {
     // The rebuilt tree disagrees with the chain, so any proof would be rejected. This
@@ -94,6 +98,9 @@ export function explainListingError(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
   if (message.includes("no_identity")) {
     return "This device has no owner identity. Submit a property application first.";
+  }
+  if (message.includes("not_approved")) {
+    return "This device's owner identity is not approved on the current registry. Submit a property application and have the registrar approve it.";
   }
   if (message.includes("approval_already_used")) {
     return "This room has already been listed under its approval. An approval is single-use: re-apply to list it again.";

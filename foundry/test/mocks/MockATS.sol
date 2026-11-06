@@ -7,6 +7,8 @@ import {IATSFactory, IATSToken} from "../../src/interfaces/IATS.sol";
 ///   - mint, burn, forced transfer and freeze need the agent role
 ///   - editing the allowlist needs its own role, which the agent role does not cover
 ///   - minting and ordinary transfers check the allowlist; forced transfers do not
+///   - isFrozen reports only freezePartialTokens, which also empties the spendable balance
+///   - setAddressFrozen only edits the allowlist, and isFrozen does not see it
 ///   - a holder can redeem their own token
 /// It only stands in for ATS in unit tests. Real behaviour is checked on testnet by
 /// app/scripts/ats-registry-e2e.mjs.
@@ -16,7 +18,6 @@ contract MockATSToken is IATSToken {
 
     error MissingRole(bytes32 role);
     error NotCompliant(address account);
-    error AddressFrozen(address account);
     error MaxSupplyExceeded();
     error InsufficientBalance();
 
@@ -28,7 +29,7 @@ contract MockATSToken is IATSToken {
     bool public isControllable;
     mapping(address => uint256) public balanceOf;
     mapping(address => bool) public isInControlList;
-    mapping(address => bool) public isFrozen;
+    mapping(address => uint256) public getFrozenTokens;
     mapping(bytes32 => mapping(address => bool)) public hasRole;
 
     modifier onlyRole(bytes32 role) {
@@ -72,7 +73,6 @@ contract MockATSToken is IATSToken {
     function transfer(address to, uint256 amount) external returns (bool) {
         if (!isInControlList[msg.sender]) revert NotCompliant(msg.sender);
         if (!isInControlList[to]) revert NotCompliant(to);
-        if (isFrozen[msg.sender]) revert AddressFrozen(msg.sender);
         _move(msg.sender, to, amount);
         return true;
     }
@@ -87,8 +87,25 @@ contract MockATSToken is IATSToken {
         return true;
     }
 
+    function isFrozen(address account) external view returns (bool) {
+        return getFrozenTokens[account] > 0;
+    }
+
+    function freezePartialTokens(address account, uint256 amount) external onlyRole(ROLE_AGENT) {
+        if (balanceOf[account] < amount) revert InsufficientBalance();
+        balanceOf[account] -= amount;
+        getFrozenTokens[account] += amount;
+    }
+
+    function unfreezePartialTokens(address account, uint256 amount) external onlyRole(ROLE_AGENT) {
+        if (getFrozenTokens[account] < amount) revert InsufficientBalance();
+        getFrozenTokens[account] -= amount;
+        balanceOf[account] += amount;
+    }
+
+    /// The trap the registry must avoid: it reports success, yet isFrozen stays false.
     function setAddressFrozen(address account, bool frozen) external onlyRole(ROLE_AGENT) {
-        isFrozen[account] = frozen;
+        isInControlList[account] = !frozen;
     }
 
     function _burn(address from, uint256 amount) private {
