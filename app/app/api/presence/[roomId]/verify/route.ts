@@ -5,13 +5,13 @@ import {
   serverConfig,
   verifyChallenge,
   verifySessionProof,
-  unboundIdentityBindings,
+  brokerIdentityRegistry,
   unboundRoomRights,
   type SessionResult,
   type SignedChallenge,
 } from "@/lib/world";
 
-const bindings = unboundIdentityBindings;
+const bindings = brokerIdentityRegistry;
 const rooms = unboundRoomRights;
 
 interface Outcome {
@@ -87,7 +87,14 @@ export async function POST(
     return fail(`challenge_${challengeCheck.reason}`);
   }
 
-  // 2. on-chain holder
+  // 2. can the deployed registry answer this at all?
+  if (!(await bindings.supportsSessions())) {
+    // Explicit rather than a generic failure: a red here would imply the broker failed
+    // the check, when in fact we cannot perform it.
+    return fail("session_binding_unsupported");
+  }
+
+  // 3. on-chain holder
   const holder = await rooms.holderOf(roomId);
   if (!holder) {
     return fail("no_current_holder");
@@ -97,13 +104,13 @@ export async function POST(
     return fail("rights_not_valid");
   }
 
-  // 3. World verification, bound to this viewing's nonce
+  // 4. World verification, bound to this viewing's nonce
   const verified = await verifySessionProof(body.result, body.challenge.nonce);
   if (!verified.ok) {
     return fail(`proof_${verified.code}`);
   }
 
-  // 4. session bound to that holder on-chain
+  // 5. session bound to that holder on-chain
   const matches = await bindings.sessionMatchesHolder(
     sessionKey(body.result.session_id),
     holder,

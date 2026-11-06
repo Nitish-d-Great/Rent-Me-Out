@@ -1,7 +1,12 @@
-# Handoff — `IdentityBinding.sol`
+# Handoff — `IdentityBinding.sol`  (SUPERSEDED)
 
-For whoever owns the chain layer. The World ID flow needs this deployed; everything
-else about it is self-contained.
+> **Read `SESSION_BINDING_ADDITION.md` instead.** Your `BrokerIdentityRegistry` already
+> covers enrollment, and `registerBroker` works unchanged with our hashed key. What it
+> lacks is session binding for the viewing check, and that addition is a smaller change
+> than adopting this contract. Two identity registries would be worse than either.
+>
+> What is still worth reading below: the reasoning for storing hashes rather than raw
+> nullifiers, and the `holderOf` requirement in point 4.
 
 ## What it is
 

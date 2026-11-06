@@ -25,6 +25,8 @@ const REASON_COPY: Record<string, string> = {
   rights_not_valid: "These rights are frozen or outside their period.",
   session_not_holder: "This person is not the broker who holds these rights.",
   no_session_on_this_device: "The broker has not verified on the device they used.",
+  session_binding_unsupported:
+    "Live broker checks are not available yet on this deployment. The rights shown above are still read from Hedera.",
   cancelled: "The broker cancelled the check.",
   "receipt_nonce-mismatch": "That code was issued for a different check. Ask for a fresh one.",
   "receipt_room-mismatch": "That code was issued for a different room.",
@@ -51,7 +53,16 @@ export function PresenceCheck({ roomId }: { roomId: string }) {
     [challenge, roomId],
   );
 
-  const scanner = useQrScanner((value) => void consume(value));
+  // Destructured at the call site: the hook returns an object carrying a ref, and
+  // reading properties off that object during render trips react-hooks/refs.
+  const {
+    videoRef,
+    scanning,
+    error: scanError,
+    supported: scannerSupported,
+    start: startScanner,
+    stop: stopScanner,
+  } = useQrScanner((value) => void consume(value));
 
   const begin = async () => {
     setError(null);
@@ -67,7 +78,7 @@ export function PresenceCheck({ roomId }: { roomId: string }) {
   };
 
   const restart = () => {
-    scanner.stop();
+    stopScanner();
     setChallenge(null);
     setResult(null);
     setPasted("");
@@ -141,27 +152,27 @@ export function PresenceCheck({ roomId }: { roomId: string }) {
             Their phone shows a code once the check completes.
           </p>
 
-          {scanner.supported ? (
+          {scannerSupported ? (
             <>
               <video
-                ref={scanner.videoRef}
+                ref={videoRef}
                 playsInline
                 muted
                 style={{
                   width: "100%",
                   maxWidth: 320,
                   borderRadius: 8,
-                  display: scanner.scanning ? "block" : "none",
+                  display: scanning ? "block" : "none",
                   marginTop: 10,
                 }}
               />
               <div className="flex wrap gap-8" style={{ marginTop: 10 }}>
-                {!scanner.scanning ? (
-                  <button type="button" className="btn btn--small" onClick={() => void scanner.start()}>
+                {!scanning ? (
+                  <button type="button" className="btn btn--small" onClick={() => void startScanner()}>
                     Scan their code
                   </button>
                 ) : (
-                  <button type="button" className="btn btn--ghost btn--small" onClick={scanner.stop}>
+                  <button type="button" className="btn btn--ghost btn--small" onClick={stopScanner}>
                     Stop scanning
                   </button>
                 )}
@@ -169,13 +180,13 @@ export function PresenceCheck({ roomId }: { roomId: string }) {
                   Start over
                 </button>
               </div>
-              {scanner.error && (
-                <p className="micro" style={{ color: "crimson" }}>{scanner.error}</p>
+              {scanError && (
+                <p className="micro" style={{ color: "crimson" }}>{scanError}</p>
               )}
             </>
           ) : null}
 
-          {(!scanner.supported || scanner.error) && (
+          {(!scannerSupported || scanError) && (
             <div className="flex wrap gap-8" style={{ marginTop: 10 }}>
               <input
                 className="input mono"

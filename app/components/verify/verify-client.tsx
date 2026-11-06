@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
+import { PresenceCheck } from "@/components/verify/presence-check";
 import { QRPanel } from "@/components/ui/qr-panel";
 import { StatusStamp } from "@/components/ui/status-stamp";
 import { VerifyBadge } from "@/components/ui/verify-badge";
@@ -38,6 +39,14 @@ export function VerifyClient({
     r3: "available",
   });
   const [live, setLive] = useState<LiveState>("idle");
+  /**
+   * "live" runs the real two-QR session-proof check. "simulated" is the scripted
+   * walkthrough, kept because the live path needs the World ID Sandbox app and an
+   * on-chain holder, and the page must still demo while those land. The simulated
+   * path is labelled as such wherever it is shown -- a fake green must never be
+   * mistakable for a real one.
+   */
+  const [mode, setMode] = useState<"live" | "simulated">("live");
   const [checkedAt, setCheckedAt] = useState<string | null>(null);
 
   const room = rooms.find((entry) => entry.id === roomId) ?? rooms[1];
@@ -261,6 +270,28 @@ export function VerifyClient({
 
       {held && (
         <div className="verify-action">
+          {mode === "live" ? (
+            <>
+              <PresenceCheck roomId={room.id} />
+              <p className="micro dim" style={{ marginTop: 12 }}>
+                The broker scans the code on their own device and completes a fresh
+                World ID session proof. The result comes back signed by the server, so
+                they cannot fake it by showing you their screen.{" "}
+                <button
+                  type="button"
+                  className="linklike"
+                  onClick={() => {
+                    setMode("simulated");
+                    setLive("idle");
+                    setCheckedAt(null);
+                  }}
+                >
+                  Show the scripted walkthrough instead
+                </button>
+              </p>
+            </>
+          ) : (
+            <>
           {live === "idle" && (
             <>
               <button
@@ -397,6 +428,24 @@ export function VerifyClient({
                 )}
               </div>
             </div>
+          )}
+
+              <p className="micro dim" style={{ marginTop: 12 }}>
+                Scripted walkthrough — these results are illustrative, not a real
+                proof.{" "}
+                <button
+                  type="button"
+                  className="linklike"
+                  onClick={() => {
+                    setMode("live");
+                    setLive("idle");
+                    setCheckedAt(null);
+                  }}
+                >
+                  Back to the live check
+                </button>
+              </p>
+            </>
           )}
         </div>
       )}

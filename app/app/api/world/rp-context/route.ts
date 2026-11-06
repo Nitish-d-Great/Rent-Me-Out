@@ -27,7 +27,15 @@ export async function POST(request: Request) {
 
   if (action !== undefined) {
     const known = Object.values(WORLD_ACTIONS) as string[];
-    if (!known.includes(action)) {
+    // Diagnostics need throwaway action names. Allowed only outside production, and
+    // only under a `probe-` prefix, so the real actions stay a closed set.
+    const isDevProbe =
+      process.env.NODE_ENV !== "production" && action.startsWith("probe-");
+    // A rehearsal suffix ("broker-verify-r2") is still one of our actions.
+    const isSuffixed =
+      process.env.NODE_ENV !== "production" &&
+      known.some((k) => action.startsWith(`${k}-`));
+    if (!known.includes(action) && !isDevProbe && !isSuffixed) {
       return NextResponse.json({ error: "unknown_action" }, { status: 400 });
     }
   }

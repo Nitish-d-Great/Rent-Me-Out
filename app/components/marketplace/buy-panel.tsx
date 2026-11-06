@@ -144,7 +144,7 @@ export function BuyPanel({ room }: { room: Room }) {
                 <button
                   type="button"
                   className="btn btn--wide"
-                  onClick={connect}
+                  onClick={() => void connect()}
                 >
                   Connect wallet
                 </button>

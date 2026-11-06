@@ -1,6 +1,16 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
+// SUPERSEDED — do not deploy without reading this first.
+//
+// The chain branch already has `foundry/src/BrokerIdentityRegistry.sol`, which covers
+// enrollment with the same one-to-one guarantee. Deploying this alongside it would give
+// the project two identity registries disagreeing about who is verified.
+//
+// The agreed path is `contracts/SESSION_BINDING_ADDITION.md`: keep their registry and add
+// session binding to it. This file is kept as the reference implementation of the session
+// half and as the rationale for hashing keys rather than storing raw nullifiers.
+
 /// @title IdentityBinding
 /// @notice On-chain, publicly verifiable World ID bindings, so identity uniqueness and
 ///         broker continuity are enforced on-chain rather than in a private database.

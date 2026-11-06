@@ -1,18 +1,19 @@
 import { NextResponse } from "next/server";
 import { isAddress } from "viem";
 import {
+  AlreadyBound,
   WORLD_ACTIONS,
   identityKey,
   sessionKey,
   serverConfig,
   verifyUniqueness,
-  unboundAllowlist,
-  unboundIdentityBindings,
+  brokerAllowlist,
+  brokerIdentityRegistry,
   type UniquenessResult,
 } from "@/lib/world";
 
-const bindings = unboundIdentityBindings;
-const allowlist = unboundAllowlist;
+const bindings = brokerIdentityRegistry;
+const allowlist = brokerAllowlist;
 
 /**
  * Enrollment for both `owner-verify` and `broker-verify`.
@@ -34,7 +35,13 @@ export async function POST(request: Request) {
   const { action, wallet, result } = body;
 
   const known = Object.values(WORLD_ACTIONS) as string[];
-  if (!action || !known.includes(action)) {
+  // Accept a rehearsal suffix outside production (see ACTION_SUFFIX in config.ts).
+  const accepted =
+    action !== undefined &&
+    (known.includes(action) ||
+      (process.env.NODE_ENV !== "production" &&
+        known.some((k) => action.startsWith(`${k}-`))));
+  if (!accepted) {
     return NextResponse.json({ error: "unknown_action" }, { status: 400 });
   }
   if (!wallet || !isAddress(wallet)) {
@@ -67,13 +74,28 @@ export async function POST(request: Request) {
   }
 
   if (!existing) {
-    await bindings.bindIdentity(idKey, wallet as `0x${string}`);
+    try {
+      await bindings.bindIdentity(idKey, wallet as `0x${string}`);
+    } catch (error) {
+      // The wallet already carries a different identity. That is the duplicate case
+      // seen from the other side, and it must not be reported as success.
+      if (error instanceof AlreadyBound) {
+        return NextResponse.json(
+          { error: error.kind === "wallet" ? "wallet_already_bound" : "identity_already_linked" },
+          { status: 409 },
+        );
+      }
+      throw error;
+    }
   }
 
   // Brokers enroll with `session_id: "create"`, so the same request mints the session
-  // used for every later viewing. Bind its hash to the wallet.
+  // used for every later viewing. Bind its hash to the wallet -- but only if the
+  // deployed contract knows how. Enrollment is the part that qualifies; presence is the
+  // part that needs session functions, so a registry without them should still let a
+  // broker enroll rather than failing the whole flow.
   let sessionBound = false;
-  if (result.session_id) {
+  if (result.session_id && (await bindings.supportsSessions())) {
     await bindings.bindSession(sessionKey(result.session_id), wallet as `0x${string}`);
     sessionBound = true;
   }

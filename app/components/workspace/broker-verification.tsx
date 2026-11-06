@@ -6,7 +6,7 @@ import { VerifyBadge } from "@/components/ui/verify-badge";
 import { WorldIdButton } from "@/components/ui/world-id-button";
 
 export function BrokerVerification() {
-  const { connected, connect } = useWallet();
+  const { connected, connect, address, rotate, isInjected } = useWallet();
   const [verified, setVerified] = useState(false);
 
   if (verified) {
@@ -42,7 +42,7 @@ export function BrokerVerification() {
         </p>
         <div className="flex wrap gap-8" style={{ marginTop: 12 }}>
           {!connected ? (
-            <button type="button" className="btn btn--small" onClick={connect}>
+            <button type="button" className="btn btn--small" onClick={() => void connect()}>
               Connect wallet
             </button>
           ) : (
@@ -53,6 +53,11 @@ export function BrokerVerification() {
             />
           )}
           <span className="badge badge--quiet">One person · one wallet</span>
+          {process.env.NODE_ENV !== "production" && connected && !isInjected && (
+            <button type="button" className="linklike micro" onClick={rotate}>
+              dev: new wallet ({address?.slice(0, 6)}…{address?.slice(-4)})
+            </button>
+          )}
         </div>
       </div>
     </div>

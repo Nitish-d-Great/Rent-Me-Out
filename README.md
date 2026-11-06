@@ -214,7 +214,9 @@ World ID is the gate into the system. No successful human verification = no way 
 | **Broker joins** (`broker-verify`, `session_id: "create"`) | One person cannot run several broker wallets to hoard rooms or escape a bad record | **Proof of Human** (ID 1) | The fraud is precisely one-person-many-accounts, so one-person-one-account is exactly — and only — what is required. No document data, no attributes, no name: collecting any of it would be disproportionate to the decision being made. The same request mints the session used at every later viewing. |
 | **Broker proves presence at a viewing** (session proof via `proveSession`) | The person standing here is live, now, and continuous with the enrolled broker who holds the rights | **Selfie Check / Proof of Presence** (ID 11) | Not a fallback — the correct credential. Three reasons: it is the only credential with documented support for *repeated* verification (World ID enforces one nullifier per person per action, so a repeated action is impossible); "Proof of Presence" is literally the property this moment needs; and the strong uniqueness claim was already made at enrollment and bound on-chain, so this check needs liveness and continuity, not a second uniqueness proof. Its medium assurance is proportionate **because it is the second factor, not the first**. |
 
-**What we demoed, and why it differs.** The two enrollment moments are implemented with **Selfie Check**, not Proof of Human, for one reason: PoH requires a physical Orb visit, which is not obtainable during a hackathon. Selfie Check is the only credential with a documented test path. The substitution is a single preset argument — `selfieCheck()` in place of `proofOfHuman()` — and the verify flow, nullifier binding, and on-chain `IdentityBinding` contract are identical either way. The viewing check is **not** substituted; it is the design, as built.
+**What we demonstrated.** Enrollment runs on **Proof of Human**, the credential argued for above — verified end to end against World ID 4.0 staging, with the proof completed by the World ID Simulator rather than a physical Orb. Backend verification returns HTTP 200, `protocol_version: "4.0"`, `environment: "staging"`, `identifier: "proof_of_human"`. The same request mints the broker's session. Nothing here is substituted or described-but-unbuilt.
+
+In production, enrollment requests `any(proof_of_human, selfie)`: a user who has been to an Orb proves personhood at the highest assurance, and a user who has not still enrolls via Selfie Check rather than being turned away. That also covers the "unavailable credential" path without a dead end. The backend reads which credential was actually used from the response `identifier`, so assurance is never assumed.
 
 **Considered and rejected:** *Identity Check* (preview) can attest `full_name`, `nationality` and `minimum_age` without exposing the underlying document, which would let the registrar cross-check the deed name cryptographically instead of by eye. That is the natural production upgrade for owner verification. It is preview-only and requires contacting World, so it is out of scope here and named as future work rather than claimed.
 
@@ -531,8 +533,21 @@ npm run dev
 
 ### Time to first successful verification
 
-**TBD** — pending Developer Portal setup and sandbox access. To be replaced with the real
-figure, including time lost to the access path described under friction (5).
+**Minutes once the RP existed — about four hours in practice**, and the gap between those
+two numbers is the finding.
+
+Writing the integration was not the slow part. The time went to establishing *which*
+integration was current: the v2/v4 ambiguity below, a design built around an action that
+cannot exist, and finally an app that answered `app_not_migrated` with no visible way to
+migrate it.
+
+That last one resolved only through the Developer Portal MCP. The dashboard showed no
+"Enable World ID 4.0" banner because the app had no RP registration at all —
+`configure_world_id` created one in a single call. From there to a verified Proof of
+Human was minutes: both registries reported `registered`, and the first signed request
+came back `success: true`.
+
+**The dashboard never surfaced what the MCP made obvious in one call.**
 
 ### Integration experience
 
@@ -586,8 +601,15 @@ The shape of the API was a good fit once understood. Most of our cost was in
 2. **It is not stated whether a session proof is cryptographically bound to the
    credential holder who created the session.** For us this is the gap that matters most
    — see the improvement below.
-3. **No duplicate-nullifier error code.** The docs rightly say duplicate detection is the
-   relying party's job, but there is no documented code distinguishing that rejection.
+3. **A reused nullifier returns `success: true`.** We verified this: two verifications of
+   the same action by the same person both return HTTP 200 with the same nullifier, and
+   the *only* difference is the message string — `"Proof verified successfully"` versus
+   `"Proof verified successfully (nullifier reuse)"`. The docs do say duplicate detection
+   is the relying party's job, but an integration that checks `success` — the obvious
+   thing to check — silently accepts every duplicate. For us that would have meant one
+   person running unlimited broker wallets, which is the exact fraud this product
+   exists to prevent. A distinct response code, or `success: false` with a
+   `nullifier_reused` code, would make the failure mode impossible to miss.
 4. **What each credential reveals to the relying party is not enumerated.** Making a
    data-minimisation argument required inferring "no identity is revealed" from the word
    *anonymous* rather than reading a field list.
