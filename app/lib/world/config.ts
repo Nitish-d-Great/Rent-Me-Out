@@ -27,6 +27,19 @@ export type WorldEnvironment = "production" | "staging" | "sandbox";
 export const WORLD_ENVIRONMENT: WorldEnvironment =
   (process.env.NEXT_PUBLIC_WORLD_ENVIRONMENT as WorldEnvironment) ?? "staging";
 
+/**
+ * The full rp_context the client sends to IDKit. Assembled server-side and returned
+ * whole by /api/world/rp-context, so the client cannot mis-name a field -- note it is
+ * `signature`, not `sig`, which is what signRequest() returns.
+ */
+export interface RpContext {
+  rp_id: string;
+  nonce: string;
+  created_at: string;
+  expires_at: string;
+  signature: string;
+}
+
 /** Selfie Check. Requires `integrity_bundle` in the verify body. */
 export const ISSUER_SCHEMA_SELFIE = 11;
 /** Proof of Human. */
