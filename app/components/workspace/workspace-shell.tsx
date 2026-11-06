@@ -18,7 +18,8 @@ const roleConfig: Record<
       { href: "/owner", label: "Dashboard", key: "01" },
       { href: "/owner/new", label: "Submit property", key: "02" },
       { href: "/owner/listings/new", label: "Create listing", key: "03" },
-      { href: "/owner#sales", label: "Sales", key: "04" },
+      { href: "/profile", label: "Public profile", key: "04" },
+      { href: "/owner#sales", label: "Sales", key: "05" },
     ],
   },
   broker: {
@@ -28,7 +29,8 @@ const roleConfig: Record<
       { href: "/broker", label: "Overview", key: "01" },
       { href: "/marketplace", label: "Browse rooms", key: "02" },
       { href: "/broker#rights", label: "My room rights", key: "03" },
-      { href: "/verify/rmo-3b-andheri?room=r2", label: "Public verify", key: "04" },
+      { href: "/verify/rmo-3b-andheri", label: "Public verify", key: "04" },
+      { href: "/profile", label: "Public profile", key: "05" },
     ],
   },
   registrar: {

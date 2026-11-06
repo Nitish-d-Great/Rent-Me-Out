@@ -24,9 +24,14 @@ export function recordToRoom(r: RoomRecord, index = 0): Room {
 
   return {
     id: r.listingId,
-    tokenId: `#${r.listingId} · tag ${r.roomTag.slice(0, 8)}…`,
+    tokenId: shortAddress(r.token),
+    tokenAddress: r.token,
+    payout: r.payout,
     name: `Room ${r.listingId}`,
-    note: "on-chain listing",
+    note: r.city ? `Registrar-approved room in ${r.city}` : "on-chain listing",
+    city: r.city,
+    arkivKey: r.arkivKey,
+    transactionId: r.purchaseTx,
     price: Number(r.price),
     state,
     holder: r.holder ?? undefined,

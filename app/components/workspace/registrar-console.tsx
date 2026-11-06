@@ -1,16 +1,11 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { ApprovalBadge, StatusStamp } from "@/components/ui/status-stamp";
-import {
-  applications as seedApplications,
-  demo,
-  formatDate,
-  rooms as sampleRooms,
-  type RoomState,
-} from "@/lib/data";
+import { formatDate, type RoomState } from "@/lib/data";
 import { useLiveRooms } from "@/lib/chain/use-live-rooms";
+import type { OwnerApplication } from "@/lib/chain/use-owner";
 
 type AuditEntry = {
   id: string;
@@ -22,32 +17,36 @@ type AuditEntry = {
   tx: string;
 };
 
-const initialAudit: AuditEntry[] = [
-  {
-    id: "audit-1",
-    action: "Property approved",
-    target: "APP-1036 · Versova 2BHK",
-    actor: "registrar.hedera",
-    reason: "Deed and society NOC verified",
-    time: "2026-10-30 11:42",
-    tx: "0.0.5941282@1778…",
-  },
-  {
-    id: "audit-2",
-    action: "Room sold",
-    target: "Room 2 · Ashoka Residency",
-    actor: "contract event",
-    reason: "USDC + token transfer confirmed",
-    time: "2027-01-02 15:08",
-    tx: demo.purchaseTx,
-  },
-];
+const TOKEN_KEY = "rmo.registrar.token";
+
+/** Sent with every call that spends the registrar key or reads private details. */
+function registrarHeaders(token: string): Record<string, string> {
+  return {
+    "content-type": "application/json",
+    ...(token ? { "x-registrar-token": token } : {}),
+  };
+}
+
+/** Decisions already on the chain, so the log survives a page reload. */
+function decisionsToAudit(apps: OwnerApplication[]): AuditEntry[] {
+  return apps
+    .filter((app) => app.status !== "pending" && app.transactionHash)
+    .map((app) => ({
+      id: `decision-${app.applicationId}`,
+      action: app.status === "approved" ? "Property approved" : "Property rejected",
+      target: `${app.applicationId} · ${app.nickname}`,
+      actor: "Registrar",
+      reason: app.reason ?? "Deed verified",
+      time: new Date(app.decidedAt ?? app.submittedAt).toLocaleString("en-GB"),
+      tx: app.transactionHash ?? "",
+    }));
+}
 
 export function RegistrarConsole() {
   // Live listings from RentalRegistry. Freezing acts on these ids, so the console must
   // not offer sample rooms that have no on-chain counterpart.
   const { rooms: liveRooms, status: liveStatus } = useLiveRooms();
-  const rooms = liveRooms ?? sampleRooms;
+  const rooms = liveRooms ?? [];
   const [freezeTx, setFreezeTx] = useState<string | null>(null);
   const [decisionTx, setDecisionTx] = useState<string | null>(null);
   const [decisionError, setDecisionError] = useState<string | null>(null);
@@ -56,40 +55,82 @@ export function RegistrarConsole() {
   const [sweeping, setSweeping] = useState(false);
   const [sweepNote, setSweepNote] = useState<string | null>(null);
 
-  const [apps, setApps] = useState(seedApplications);
-  const [selectedId, setSelectedId] = useState("APP-1042");
+  const [apps, setApps] = useState<OwnerApplication[]>([]);
+  const [appsState, setAppsState] = useState<"loading" | "ready" | "locked" | "unavailable">("loading");
+  const [token, setToken] = useState("");
+  const [tokenDraft, setTokenDraft] = useState("");
+  const [selectedId, setSelectedId] = useState<string | null>(null);
   const [rejection, setRejection] = useState("");
   const [processing, setProcessing] = useState<"approve" | "reject" | null>(
     null,
   );
-  const [roomStates, setRoomStates] = useState<Record<string, RoomState>>({
-    r1: "available",
-    r2: "held",
-    r3: "available",
-  });
+  // Only holds a state the registrar just changed, until the next read from the chain.
+  const [roomStates, setRoomStates] = useState<Record<string, RoomState>>({});
   const [freezeTarget, setFreezeTarget] = useState<string | null>(null);
   const [freezeReason, setFreezeReason] = useState("");
-  const [audit, setAudit] = useState(initialAudit);
+  const [sessionAudit, setSessionAudit] = useState<AuditEntry[]>([]);
+  const audit = [...sessionAudit, ...decisionsToAudit(apps)];
 
-  const selected = apps.find((app) => app.id === selectedId) ?? apps[0];
+  const selected = apps.find((app) => app.applicationId === selectedId) ?? apps[0];
 
-  const pushAudit = (
-    action: string,
-    target: string,
-    reason: string,
-    tx = "0.0.5941282@1779…",
-  ) => {
-    setAudit((current) => [
+  /** The review queue: status from Arkiv, details decrypted from Swarm by the server. */
+  const loadApplications = useCallback(async (accessToken: string) => {
+    try {
+      const res = await fetch("/api/properties", { headers: registrarHeaders(accessToken) });
+      if (res.status === 401) {
+        setAppsState("locked");
+        return;
+      }
+      if (!res.ok) throw new Error(String(res.status));
+      const data = (await res.json()) as { applications: OwnerApplication[] };
+      setApps(data.applications);
+      setAppsState("ready");
+    } catch {
+      setAppsState("unavailable");
+    }
+  }, []);
+
+  useEffect(() => {
+    void (async () => {
+      const stored = window.sessionStorage.getItem(TOKEN_KEY) ?? "";
+      setToken(stored);
+      await loadApplications(stored);
+    })();
+  }, [loadApplications]);
+
+  const unlock = async (event: React.FormEvent) => {
+    event.preventDefault();
+    const value = tokenDraft.trim();
+    window.sessionStorage.setItem(TOKEN_KEY, value);
+    setToken(value);
+    setTokenDraft("");
+    setAppsState("loading");
+    await loadApplications(value);
+  };
+
+  /** Opens the decrypted deed. Fetched rather than linked, so the token stays in a header. */
+  const openDeed = async (applicationId: string) => {
+    setDecisionError(null);
+    try {
+      const res = await fetch(`/api/properties/${encodeURIComponent(applicationId)}/deed`, {
+        headers: registrarHeaders(token),
+      });
+      if (!res.ok) throw new Error(String(res.status));
+      window.open(URL.createObjectURL(await res.blob()), "_blank", "noopener");
+    } catch {
+      setDecisionError("The deed could not be read from Swarm.");
+    }
+  };
+
+  const pushAudit = (action: string, target: string, reason: string, tx: string) => {
+    setSessionAudit((current) => [
       {
         id: `audit-${Date.now()}`,
         action,
         target,
-        actor: "registrar.hedera",
+        actor: "Registrar",
         reason,
-        time: new Intl.DateTimeFormat("en-GB", {
-          dateStyle: "medium",
-          timeStyle: "short",
-        }).format(new Date()),
+        time: new Date().toLocaleString("en-GB"),
         tx,
       },
       ...current,
@@ -113,10 +154,10 @@ export function RegistrarConsole() {
     try {
       const res = await fetch("/api/properties", {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: registrarHeaders(token),
         body: JSON.stringify({
           action: decision === "approved" ? "approve" : "reject",
-          applicationId: selected.id,
+          applicationId: selected.applicationId,
           reason: decision === "rejected" ? rejection.trim() : undefined,
         }),
       });
@@ -132,24 +173,8 @@ export function RegistrarConsole() {
         return;
       }
 
-      setApps((current) =>
-        current.map((app) =>
-          app.id === selected.id
-            ? {
-                ...app,
-                status: decision,
-                rejectionReason:
-                  decision === "rejected" ? rejection.trim() : undefined,
-              }
-            : app,
-        ),
-      );
       setDecisionTx(data.transactionHash ?? null);
-      pushAudit(
-        decision === "approved" ? "Property approved" : "Property rejected",
-        `${selected.id} · ${selected.nickname}`,
-        decision === "rejected" ? rejection.trim() : "Deed verified",
-      );
+      await loadApplications(token);
       setRejection("");
     } catch {
       setDecisionError("network_error");
@@ -182,7 +207,7 @@ export function RegistrarConsole() {
     try {
       const res = await fetch(`/api/rooms/${listingId}/lifecycle`, {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: registrarHeaders(token),
         body: JSON.stringify({ action }),
       });
       const data = (await res.json()) as {
@@ -207,6 +232,7 @@ export function RegistrarConsole() {
         action === "cancel" ? "Listing cancelled" : "Room expired",
         label,
         action === "cancel" ? "Withdrawn before sale" : "Period ended · token burned",
+        data.transactionHash ?? "",
       );
     } catch {
       setFreezeError("network_error");
@@ -235,7 +261,12 @@ export function RegistrarConsole() {
       }
       setFreezeTx(data.transactionHash ?? null);
       setSweepNote(`Expired ${data.expired.length} listing(s): ${data.expired.join(", ")}`);
-      pushAudit("Expiry sweep", `${data.expired.length} listing(s)`, "Period ended · tokens burned");
+      pushAudit(
+        "Expiry sweep",
+        `${data.expired.length} listing(s)`,
+        "Period ended · tokens burned",
+        data.transactionHash ?? "",
+      );
     } catch {
       setFreezeError("network_error");
     } finally {
@@ -255,7 +286,7 @@ export function RegistrarConsole() {
     try {
       const res = await fetch(`/api/rooms/${listingId}/freeze`, {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: registrarHeaders(token),
         body: JSON.stringify({ action, reason }),
       });
       const data = (await res.json()) as {
@@ -273,7 +304,12 @@ export function RegistrarConsole() {
         [listingId]: (data.state as RoomState) ?? (action === "freeze" ? "frozen" : "held"),
       }));
       setFreezeTx(data.transactionHash ?? null);
-      pushAudit(action === "freeze" ? "Room frozen" : "Room unfrozen", label, reason);
+      pushAudit(
+        action === "freeze" ? "Room frozen" : "Room unfrozen",
+        label,
+        reason,
+        data.transactionHash ?? "",
+      );
     } catch {
       setFreezeError("network_error");
     } finally {
@@ -289,9 +325,9 @@ export function RegistrarConsole() {
           <div className="metric__value">{pending}</div>
         </div>
         <div className="metric">
-          <div className="metric__label">Approved this month</div>
+          <div className="metric__label">Approved</div>
           <div className="metric__value">
-            1 <small>Versova 2BHK</small>
+            {apps.filter((app) => app.status === "approved").length}
           </div>
         </div>
         <div className="metric">
@@ -316,22 +352,53 @@ export function RegistrarConsole() {
             <span className="badge badge--brass">{pending} pending</span>
           </div>
           <div className="queue-list">
+            {appsState === "loading" && (
+              <p className="micro dim" style={{ padding: 18 }}>Reading the queue from Arkiv…</p>
+            )}
+            {appsState === "unavailable" && (
+              <p className="micro" style={{ padding: 18, color: "crimson" }}>
+                ● The queue could not be read from Arkiv.
+              </p>
+            )}
+            {appsState === "locked" && (
+              <form onSubmit={(event) => void unlock(event)} style={{ padding: 18 }}>
+                <div className="field">
+                  <label htmlFor="registrar-token">Registrar access token</label>
+                  <input
+                    id="registrar-token"
+                    type="password"
+                    value={tokenDraft}
+                    onChange={(event) => setTokenDraft(event.target.value)}
+                  />
+                </div>
+                <button type="submit" className="btn btn--small" style={{ marginTop: 10 }}>
+                  Unlock
+                </button>
+              </form>
+            )}
+            {appsState === "ready" && apps.length === 0 && (
+              <p className="micro dim" style={{ padding: 18 }}>
+                No applications yet. They appear here when an owner submits a property.
+              </p>
+            )}
             {apps.map((app) => (
               <button
-                key={app.id}
+                key={app.applicationId}
                 type="button"
                 className="queue-item"
-                data-selected={app.id === selectedId}
+                data-selected={app.applicationId === selected?.applicationId}
                 onClick={() => {
-                  setSelectedId(app.id);
+                  setSelectedId(app.applicationId);
                   setRejection("");
+                  setDecisionTx(null);
+                  setDecisionError(null);
                 }}
               >
-                <span className="queue-item__id mono">{app.id}</span>
+                <span className="queue-item__id mono">{app.applicationId}</span>
                 <strong>{app.nickname}</strong>
                 <span className="queue-item__meta">
                   {app.locality} · {app.rooms} rooms ·{" "}
-                  {formatDate(app.submittedAt)}
+                  {formatDate(app.submittedAt.slice(0, 10))}
                 </span>
                 <span style={{ marginTop: 8 }}>
                   <ApprovalBadge state={app.status} />
@@ -341,12 +408,14 @@ export function RegistrarConsole() {
           </div>
         </aside>
 
+        {selected ? (
         <section className="panel">
           <div className="panel__head">
             <div>
               <h2>{selected.nickname}</h2>
               <span className="micro dim">
-                {selected.id} · submitted {formatDate(selected.submittedAt)}
+                {selected.applicationId} · submitted{" "}
+                {formatDate(selected.submittedAt.slice(0, 10))}
               </span>
             </div>
             <ApprovalBadge state={selected.status} />
@@ -358,32 +427,26 @@ export function RegistrarConsole() {
                 <span className="mono">{selected.deedName}</span>
                 <span className="badge badge--alert">Registrar-only decrypt</span>
               </div>
-              <div className="deed-viewer__paper" aria-label="Restricted deed preview">
-                <span className="micro dim">Strictly restricted preview</span>
-                <h3>Deed of lease · {selected.nickname}</h3>
-                <span className="deed-viewer__line" />
-                <span className="deed-viewer__line" />
-                <span className="deed-viewer__line deed-viewer__line--short" />
-                <span className="deed-viewer__line" />
-                <span className="deed-viewer__line deed-viewer__line--short" />
-                <div className="deed-viewer__seal">REGISTRAR COPY</div>
-                <p className="micro dim">
-                  Page 1 of {selected.deedPages} · decrypted in-memory · access
-                  audited
+              <div className="deed-viewer__paper">
+                <span className="micro dim">Encrypted on Swarm</span>
+                <h3>Deed · {selected.nickname}</h3>
+                <p className="small dim" style={{ marginTop: 10 }}>
+                  The deed is stored as ciphertext and is decrypted only for this review.
                 </p>
+                <button
+                  type="button"
+                  className="btn btn--small"
+                  style={{ marginTop: 14 }}
+                  onClick={() => void openDeed(selected.applicationId)}
+                >
+                  Open deed
+                </button>
               </div>
             </div>
 
             <div className="deed-side">
-              <p className="eyebrow">Owner + property</p>
+              <p className="eyebrow">Property</p>
               <div className="buy-panel__list" style={{ marginTop: 12 }}>
-                <div>
-                  <span>Owner wallet</span>
-                  <span className="mono">
-                    {selected.ownerWallet.slice(0, 6)}…
-                    {selected.ownerWallet.slice(-4)}
-                  </span>
-                </div>
                 <div>
                   <span>Locality</span>
                   <span>
@@ -395,25 +458,10 @@ export function RegistrarConsole() {
                   <span>{selected.rooms}</span>
                 </div>
                 <div>
-                  <span>Deed</span>
-                  <span className="mono">{selected.deedPages} pages</span>
-                </div>
-                <div>
-                  <span>World ID</span>
-                  <span className="green">Validated</span>
-                </div>
-                <div>
                   <span>Commitment</span>
-                  <span className="mono">0x89bb…3ad2</span>
-                </div>
-              </div>
-
-              <div className="notice notice--brass" style={{ marginTop: 14 }}>
-                <span className="notice__icon" aria-hidden="true">
-                  i
-                </span>
-                <div>
-                  <p>{selected.note}</p>
+                  <span className="mono">
+                    {selected.commitment.slice(0, 8)}…{selected.commitment.slice(-6)}
+                  </span>
                 </div>
               </div>
 
@@ -503,14 +551,29 @@ export function RegistrarConsole() {
                     <p>
                       {selected.status === "approved"
                         ? "The owner can now create one room token per room."
-                        : selected.rejectionReason}
+                        : selected.reason}
                     </p>
+                    {selected.transactionHash && (
+                      <a
+                        href={`https://hashscan.io/testnet/transaction/${selected.transactionHash}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="mono micro"
+                      >
+                        {selected.transactionHash.slice(0, 18)}…
+                      </a>
+                    )}
                   </div>
                 </div>
               )}
             </div>
           </div>
         </section>
+        ) : (
+          <section className="panel panel--pad">
+            <p className="small dim">Select an application to review it.</p>
+          </section>
+        )}
       </div>
 
       <section className="panel" id="properties" style={{ marginTop: 24 }}>
@@ -530,13 +593,11 @@ export function RegistrarConsole() {
             ) : liveStatus === "loading" ? (
               <span className="dim">Reading listings…</span>
             ) : (
-              // Freezing a sample room would fail: it has no on-chain listing.
-              <span style={{ color: "crimson" }}>
-                ● Sample rooms — freeze is unavailable
+              <span className="dim">
+                {liveStatus === "empty" ? "No listings yet" : "Registry unreachable"}
               </span>
             )}
           </span>
-          <span className="badge badge--quiet">Room 2 · Ashoka Residency</span>
         </div>
         <div className="panel__body panel__body--flush">
           <div className="table-scroll">
@@ -557,7 +618,9 @@ export function RegistrarConsole() {
                     <td colSpan={6} className="dim micro">
                       {liveStatus === "loading"
                         ? "Reading listings from Hedera…"
-                        : "The registry is unreachable. No listings are shown, because sample rooms would name holders who do not hold anything."}
+                        : liveStatus === "empty"
+                          ? "No rooms have been listed on this registry yet."
+                          : "The registry is unreachable, so no listings can be shown."}
                     </td>
                   </tr>
                 )}
@@ -594,7 +657,7 @@ export function RegistrarConsole() {
                               room.id,
                               "unfreeze",
                               "Dispute resolved",
-                              `${room.name} · Ashoka Residency`,
+                              room.name,
                             )
                           }
                         >
@@ -620,16 +683,20 @@ export function RegistrarConsole() {
                             void runLifecycle(
                               room.id,
                               "cancel",
-                              `${room.name} · Ashoka Residency`,
+                              room.name,
                             )
                           }
                         >
                           {freezing === room.id ? "Cancelling…" : "Cancel listing"}
                         </button>
-                      ) : room.state === "expired" ||
-                        room.state === "cancelled" ? (
+                      ) : room.state === "cancelled" ? (
                         <span className="dim" style={{ fontSize: 10.5 }}>
                           Token burned
+                        </span>
+                      ) : room.state === "expired" ? (
+                        // Ended rooms read as expired before the sweep has burned the token.
+                        <span className="dim" style={{ fontSize: 10.5 }}>
+                          Period ended
                         </span>
                       ) : (
                         <span className="dim" style={{ fontSize: 10.5 }}>
@@ -713,7 +780,7 @@ export function RegistrarConsole() {
                           target,
                           "freeze",
                           reason,
-                          `${room?.name ?? `Room ${target}`} · Ashoka Residency`,
+                          room?.name ?? `Room ${target}`,
                         );
                       }}
                     >
@@ -762,7 +829,19 @@ export function RegistrarConsole() {
                     <td className="mono">{entry.actor}</td>
                     <td>{entry.reason}</td>
                     <td>{entry.time}</td>
-                    <td className="mono">{entry.tx}</td>
+                    <td className="mono">
+                      {entry.tx ? (
+                        <a
+                          href={`https://hashscan.io/testnet/transaction/${entry.tx}`}
+                          target="_blank"
+                          rel="noreferrer"
+                        >
+                          {entry.tx.slice(0, 12)}…
+                        </a>
+                      ) : (
+                        "—"
+                      )}
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -772,11 +851,11 @@ export function RegistrarConsole() {
       </section>
 
       <div className="between wrap mt-24">
-        <Link href="/verify/rmo-3b-andheri?room=r2" className="text-link">
-          Open the tenant-facing page
+        <Link href="/marketplace" className="text-link">
+          Browse the public listings
         </Link>
         <span className="micro dim">
-          Registrar actions are permissioned and audited in this demo.
+          Every decision above links to its Hedera transaction.
         </span>
       </div>
     </>

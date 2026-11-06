@@ -1,30 +1,93 @@
 import type { Metadata } from "next";
 import { MarketplaceClient } from "@/components/marketplace/marketplace-client";
 import { demo, formatDate, marketplaceRooms, property } from "@/lib/data";
-import { readAllRooms } from "@/lib/chain/registry";
+import Link from "next/link";
+import { queryListings, readRoomIndex } from "@/lib/arkiv/listings";
+import { readAllRooms, type RoomRecord } from "@/lib/chain/registry";
 import { recordToRoom } from "@/lib/chain/to-room";
 import type { RoomCardData } from "@/components/marketplace/room-card";
 
+const CHAIN_WAIT_MS = 4_000;
+
+/** The Arkiv index in the shape the page renders. Status only: holders come from Hedera. */
+async function recordsFromArkiv(): Promise<RoomRecord[]> {
+  const states: Record<string, RoomRecord["state"]> = {
+    available: "available", sold: "held", frozen: "frozen", cancelled: "cancelled",
+  };
+  const listings = await queryListings().catch(() => []);
+  return listings
+    .sort((a, b) => Number(a.listingId) - Number(b.listingId))
+    .map((listing) => ({
+      listingId: listing.listingId,
+      state: states[listing.status] ?? "available",
+      valid: false,
+      holder: null,
+      holderIdentity: null,
+      start: new Date(listing.startsAt * 1000).toISOString(),
+      end: new Date(listing.endsAt * 1000).toISOString(),
+      priceRaw: listing.priceUsdc,
+      price: (Number(listing.priceUsdc) / 1e6).toFixed(2),
+      roomTag: "",
+      token: listing.token,
+      payout: listing.payout,
+    }));
+}
+
 /**
- * Listings from the registry, falling back to the sample set only when the chain is
- * unreachable or empty -- and saying which it showed, so a sample room is never
- * mistaken for one that can actually be bought.
+ * Rooms and their rights come from Hedera, with the city and search from Arkiv. Falls
+ * back to the sample set only when the registry is unreachable or empty, and says so,
+ * so a sample room is never mistaken for one that can be bought.
  */
-async function loadListings(): Promise<{ rooms: RoomCardData[]; live: boolean }> {
+async function loadListings(city?: string): Promise<{
+  rooms: RoomCardData[];
+  live: boolean;
+  cities: string[];
+  indexed: boolean;
+  fromIndex: boolean;
+}> {
+  let index: Awaited<ReturnType<typeof readRoomIndex>> | null = null;
+  let matching: Set<string> | null = null;
   try {
-    const records = await readAllRooms();
+    index = await readRoomIndex();
+    // The city filter is an Arkiv query, not a filter over rooms already in memory.
+    if (city) matching = new Set((await queryListings({ city })).map((l) => l.listingId));
+  } catch (error) {
+    console.error("[marketplace] Arkiv index unavailable:", error);
+  }
+
+  try {
+    // A cold read from Hedera can take most of a minute, so don't hold the page for it.
+    // It keeps running and fills the cache for the next visitor.
+    const fromChain = await Promise.race([
+      readAllRooms(),
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), CHAIN_WAIT_MS)),
+    ]);
+    let records = fromChain ?? (await recordsFromArkiv());
+    // Nothing on Arkiv either, so the chain's answer is the only one there is.
+    if (fromChain === null && records.length === 0) records = await readAllRooms();
     if (records.length) {
+      const cities = [
+        ...new Set([...(index?.values() ?? [])].map((e) => e.city).filter((c): c is string => Boolean(c))),
+      ].sort();
       return {
-        rooms: records.map((record, index) => ({
-          ...recordToRoom(record, index),
-          propertyId: property.id,
-          propertyName: property.nickname,
-          locality: property.locality,
-          city: property.city,
-          periodLabel: `${formatDate(record.start.slice(0, 10))} – ${formatDate(record.end.slice(0, 10))}`,
-          propertyApproved: true,
-        })),
+        rooms: records
+          .filter((record) => !matching || matching.has(record.listingId))
+          .map((record, index_) => {
+            const entry = index?.get(record.listingId);
+            return {
+              ...recordToRoom({ ...record, city: entry?.city, arkivKey: entry?.listingKey }, index_),
+              propertyId: property.id,
+              propertyName: "Registrar-approved property",
+              locality: "Address shared by the broker",
+              city: entry?.city ?? "City not indexed",
+              periodLabel: `${formatDate(record.start.slice(0, 10))} – ${formatDate(record.end.slice(0, 10))}`,
+              propertyApproved: true,
+            };
+          }),
         live: true,
+        cities,
+        indexed: index !== null,
+        fromIndex: fromChain === null,
       };
     }
   } catch {
@@ -33,6 +96,9 @@ async function loadListings(): Promise<{ rooms: RoomCardData[]; live: boolean }>
   return {
     rooms: marketplaceRooms.map((room) => ({ ...room, propertyApproved: true })),
     live: false,
+    cities: [],
+    indexed: false,
+    fromIndex: false,
   };
 }
 
@@ -42,8 +108,13 @@ export const metadata: Metadata = {
     "Available room-rights listings with a registrar-approved property and one verified broker per room.",
 };
 
-export default async function MarketplacePage() {
-  const { rooms, live } = await loadListings();
+export default async function MarketplacePage({
+  searchParams,
+}: {
+  searchParams: Promise<{ city?: string }>;
+}) {
+  const { city } = await searchParams;
+  const { rooms, live, cities, indexed, fromIndex } = await loadListings(city);
 
   return (
     <div className="shell section section--tight">
@@ -59,12 +130,41 @@ export default async function MarketplacePage() {
         <div className="page-head__actions">
           <span className="badge badge--quiet">
             {rooms.length} {rooms.length === 1 ? "listing" : "listings"}
-            {live ? " · live from Hedera" : ` · ${demo.periodLabel}`}
+            {live
+              ? fromIndex
+                ? " · from Arkiv · open a room to confirm on Hedera"
+                : ` · rights from Hedera${indexed ? " · search from Arkiv" : ""}`
+              : ` · ${demo.periodLabel}`}
           </span>
         </div>
       </div>
 
+      {cities.length > 0 && (
+        <div className="flex wrap gap-8" style={{ marginBottom: 16 }}>
+          <Link href="/marketplace" className="demo-chip" data-active={!city}>
+            All cities
+          </Link>
+          {cities.map((name) => (
+            <Link
+              key={name}
+              href={`/marketplace?city=${encodeURIComponent(name)}`}
+              className="demo-chip"
+              data-active={city === name}
+            >
+              {name}
+            </Link>
+          ))}
+        </div>
+      )}
+
       <MarketplaceClient rooms={rooms} />
+
+      {live && !indexed && (
+        <p className="micro" style={{ color: "crimson", marginTop: 12 }}>
+          ● Arkiv is unreachable, so cities and search are unavailable. Rights above still
+          come from Hedera.
+        </p>
+      )}
 
       {!live && (
         <p className="micro" style={{ color: "crimson", marginTop: 12 }}>

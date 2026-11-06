@@ -1,13 +1,13 @@
 "use client";
 
-import { useState } from "react";
+import { useWalletVerified } from "@/lib/chain/use-owner";
 import { useWallet } from "@/components/providers";
 import { VerifyBadge } from "@/components/ui/verify-badge";
 import { WorldIdButton } from "@/components/ui/world-id-button";
 
 export function BrokerVerification() {
   const { connected, connect, address, rotate, isInjected } = useWallet();
-  const [verified, setVerified] = useState(false);
+  const { verified, confirm: setVerified } = useWalletVerified(address);
 
   if (verified) {
     return (
@@ -49,7 +49,7 @@ export function BrokerVerification() {
             <WorldIdButton
               action="broker-verify"
               label="Verify with World ID"
-              onVerified={() => setVerified(true)}
+              onVerified={setVerified}
             />
           )}
           <span className="badge badge--quiet">One person · one wallet</span>

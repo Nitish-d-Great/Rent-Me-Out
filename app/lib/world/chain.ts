@@ -31,7 +31,7 @@ export const WRITE_GAS = 1_000_000n;
 
 /**
  * BrokerIdentityRegistry, as deployed at
- * 0xF3A8f444502A2B9Be6B9AdA344c9A1b07Db4B0dC.
+ * 0x87081bAA3a6F0518f16d787e53754c5fD6a6Dac9.
  *
  * Signatures confirmed against the deployed bytecode's selectors, not from a shared
  * file. Note `bindSession(bytes32,address)` takes (sessionKey, wallet) -- the reverse of

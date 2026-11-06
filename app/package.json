@@ -12,6 +12,8 @@
     "registry": "node scripts/registry-admin.mjs"
   },
   "dependencies": {
+    "@arkiv-network/sdk": "^1.0.1",
+    "@ethersphere/bee-js": "^13.2.0",
     "@gsap/react": "^2.1.2",
     "@react-three/drei": "^10.7.9",
     "@react-three/fiber": "^9.8.2",

@@ -241,19 +241,20 @@ This is the core trust moment of the product: a tenant, standing in a room, can 
 
 Arkiv replaces a traditional database. Its built-in entity expiry matches our time-bound tokens: a listing for Jan–Mar disappears from Arkiv on 31 March with no cleanup code.
 
-**Why Arkiv over Postgres:**
-If listings sat in a database, only our app could read them and they'd need cleanup jobs. On Arkiv, owners own their listing data, anyone can query the verify index without our permission, and records expire with the rights they describe.
+**Wallet that wrote our entities:** `0xE47DBA74b5F91f216D9456d1d6698b6907c391dF` on Rabdi.
 
-**Entities:**
+**A query you can run:** available rooms in Pune, with no key needed, in [arkiv/schema.md](arkiv/schema.md#a-query-you-can-run).
 
-| Entity | Key Fields | Expires |
-| --- | --- | --- |
-| `PropertyApplication` | propertyId, city, status (pending/approved/rejected), deedRef | 30 days after decision |
-| `RoomListing` | propertyId, roomIndex, priceUSDC, startDate, endDate, status (available/sold) | Listing end date |
-| `RightsRecord` | propertyId, roomIndex, holderWallet, validUntil, tokenAddress, hederaTxId | Listing end date |
-| `BrokerProfile` (optional) | wallet, verified, roomsHeld, completedPeriods | None / yearly |
+Rooms are found on Arkiv, but Hedera decides who holds them. Applications, listings and rights records live on Arkiv and expire with what they describe. Deeds and property details are encrypted on our server and stored on Swarm, and Arkiv holds only a reference to that ciphertext.
 
-**Swarm:** deed PDFs (encrypted) and property photos are stored on Swarm. Arkiv entities hold references. The encrypted deed reference is never stored in clear text on Arkiv — it is either re-encrypted with the registrar's key or kept in the backend with only a hash on Arkiv.
+| Doc | Covers |
+| --- | --- |
+| [arkiv/schema.md](arkiv/schema.md) | Entities, queried fields, owners, expiry |
+| [arkiv/how-you-use-arkiv.md](arkiv/how-you-use-arkiv.md) | How each feature changes what users see |
+| [arkiv/why-arkiv.md](arkiv/why-arkiv.md) | What users would lose with Postgres, and what we kept off Arkiv |
+| [arkiv/swarm.md](arkiv/swarm.md) | What is on Swarm, with a reference you can read |
+| [arkiv/friction.md](arkiv/friction.md) | Feedback on Arkiv and Swarm |
+| [arkiv/reach.md](arkiv/reach.md) | Who it is for |
 
 ---
 

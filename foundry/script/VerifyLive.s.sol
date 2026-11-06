@@ -4,7 +4,6 @@ pragma solidity 0.8.23;
 import {Script, console} from "forge-std/Script.sol";
 import {RentalRegistry} from "../src/RentalRegistry.sol";
 import {BrokerIdentityRegistry} from "../src/BrokerIdentityRegistry.sol";
-import {RoomRights} from "../src/RoomRights.sol";
 import {DemoUSDC} from "../src/DemoUSDC.sol";
 
 /// Checks a live deployment: reads every wired reference, then exercises session rotation
@@ -16,7 +15,6 @@ import {DemoUSDC} from "../src/DemoUSDC.sol";
 contract VerifyLive is Script {
     RentalRegistry reg;
     BrokerIdentityRegistry ids;
-    RoomRights rights;
     DemoUSDC usdc;
 
     function run() external {
@@ -24,7 +22,6 @@ contract VerifyLive is Script {
         reg = RentalRegistry(vm.parseJsonAddress(j, ".RentalRegistry"));
         ids = BrokerIdentityRegistry(vm.parseJsonAddress(j, ".BrokerIdentityRegistry"));
         usdc = DemoUSDC(vm.parseJsonAddress(j, ".USDC"));
-        rights = reg.rights();
         address me = msg.sender;
 
         _wiring(j, me);
@@ -39,18 +36,19 @@ contract VerifyLive is Script {
         console.log("ALL LIVE CHECKS PASSED");
     }
 
+    function holder_(uint256 id) private view returns (address) {
+        return reg.holderOf(id);
+    }
+
     function _wiring(string memory j, address me) private view {
         console.log("== wiring ==");
         require(address(reg).code.length > 0, "RentalRegistry has no code");
         require(address(ids).code.length > 0, "BrokerIdentityRegistry has no code");
-        require(address(rights).code.length > 0, "RoomRights has no code");
+        require(address(reg.atsFactory()).code.length > 0, "ATS factory has no code");
         require(address(usdc).code.length > 0, "USDC has no code");
 
         require(address(reg.identity()) == address(ids), "registry -> identity mismatch");
         require(reg.usdc() == address(usdc), "registry -> usdc mismatch");
-        require(address(reg.rights()) == address(rights), "registry -> rights mismatch");
-        require(rights.agent() == address(reg), "rights agent is not the registry");
-        require(address(rights.identity()) == address(ids), "rights -> identity mismatch");
         require(address(reg.semaphore()) == vm.parseJsonAddress(j, ".Semaphore"), "registry -> semaphore mismatch");
         require(reg.isRegistrar(me), "sender is not a registrar");
         require(ids.isRegistrar(me), "sender is not an identity registrar");
@@ -88,7 +86,7 @@ contract VerifyLive is Script {
         console.log("  payout balance     ", usdc.balanceOf(l.payout));
 
         require(holder != address(0), "no holder");
-        require(rights.ownerOf(id) == holder, "token holder != rights holder");
+        require(reg.tokenOf(id).balanceOf(holder) == 1, "token holder != rights holder");
         require(reg.holderIdentity(id) == ids.identityOf(holder), "holderIdentity mismatch");
         require(ids.isVerified(holder), "holder is not a verified broker");
         require(usdc.balanceOf(l.payout) >= l.price, "payout never received the price");
@@ -115,13 +113,13 @@ contract VerifyLive is Script {
         require(reg.isValid(id), "precondition: listing 1 should be valid");
 
         reg.freezeRoom(id, keccak256("verify-live-drill"));
-        require(rights.isFrozen(id), "token not frozen");
+        require(reg.tokenOf(id).isFrozen(holder_(id)), "token not frozen");
         require(reg.roomState(id) == RentalRegistry.RoomState.Frozen, "state is not Frozen");
         require(!reg.isValid(id), "frozen room still reads valid");
         console.log("  frozen: state=3, isValid=false");
 
         reg.unfreezeRoom(id, keccak256("verify-live-resolved"));
-        require(!rights.isFrozen(id), "still frozen");
+        require(!reg.tokenOf(id).isFrozen(holder_(id)), "still frozen");
         require(reg.roomState(id) == RentalRegistry.RoomState.Held, "did not return to Held");
         require(reg.isValid(id), "did not return to valid");
         console.log("  unfrozen: state=2, isValid=true");

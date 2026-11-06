@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { cancelListing, expireListing } from "@/lib/chain/registry-write";
 import { readRoom } from "@/lib/chain/registry";
+import { syncListing } from "@/lib/arkiv/sync";
+import { isRegistrar } from "@/lib/registrar-auth";
 
 /**
  * Cancel an unsold listing, or expire one whose period has ended.
@@ -12,6 +14,9 @@ export async function POST(
   request: Request,
   context: { params: Promise<{ listingId: string }> },
 ) {
+  if (!isRegistrar(request)) {
+    return NextResponse.json({ error: "registrar_only" }, { status: 401 });
+  }
   const { listingId: raw } = await context.params;
 
   let listingId: bigint;
@@ -35,6 +40,7 @@ export async function POST(
         ? await cancelListing(listingId)
         : await expireListing(listingId);
 
+    await syncListing(listingId).catch((error) => console.error("[lifecycle] not indexed:", error));
     const room = await readRoom(listingId);
     return NextResponse.json({
       ok: true,

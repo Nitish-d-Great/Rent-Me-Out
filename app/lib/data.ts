@@ -11,6 +11,14 @@ export type VerificationState = "verified" | "unverified" | "pending";
 export interface Room {
   id: string;
   tokenId: string;
+  /** The room's ATS token. Only live listings have one; sample rooms do not. */
+  tokenAddress?: string;
+  /** The owner's wallet, on live listings. */
+  payout?: string;
+  /** Public city, from the room's Arkiv listing. */
+  city?: string;
+  /** The room's public record on Arkiv. */
+  arkivKey?: string;
   name: string;
   note: string;
   price: number;
@@ -297,6 +305,11 @@ export function formatUsdc(value: number): string {
   return new Intl.NumberFormat("en-US", {
     maximumFractionDigits: 0,
   }).format(value);
+}
+
+/** A room's own rights period, for sample and on-chain rooms alike. */
+export function periodLabel(room: Pick<Room, "validFrom" | "validUntil">): string {
+  return `${formatDate(room.validFrom)} – ${formatDate(room.validUntil)}`;
 }
 
 export function formatDate(value: string): string {

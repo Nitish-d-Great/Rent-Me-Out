@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { readRoomIndex } from "@/lib/arkiv/listings";
 import { readAllRooms, readRootVersion } from "@/lib/chain/registry";
 
 /**
@@ -9,9 +10,27 @@ import { readAllRooms, readRootVersion } from "@/lib/chain/registry";
  */
 export async function GET() {
   try {
-    const [rooms, rootVersion] = await Promise.all([readAllRooms(), readRootVersion()]);
+    const [chainRooms, rootVersion, index] = await Promise.all([
+      readAllRooms(),
+      readRootVersion(),
+      // Rights come from Hedera, so an Arkiv outage only loses the city and record links.
+      readRoomIndex().catch((error) => {
+        console.error("[rooms] Arkiv index unavailable:", error);
+        return null;
+      }),
+    ]);
+    const rooms = chainRooms.map((room) => {
+      const entry = index?.get(room.listingId);
+      return {
+        ...room,
+        city: entry?.city,
+        label: entry?.label,
+        purchaseTx: entry?.purchaseTx,
+        arkivKey: entry?.rightsKey ?? entry?.listingKey,
+      };
+    });
     return NextResponse.json(
-      { rooms, rootVersion, source: "hedera-testnet" },
+      { rooms, rootVersion, source: "hedera-testnet", indexed: index !== null },
       { headers: { "Cache-Control": "no-store" } },
     );
   } catch (error) {

@@ -4,7 +4,7 @@ pragma solidity 0.8.23;
 import {ISemaphore} from "@semaphore-protocol/contracts/interfaces/ISemaphore.sol";
 import {ISemaphoreGroups} from "@semaphore-protocol/contracts/interfaces/ISemaphoreGroups.sol";
 import {Roles} from "./Roles.sol";
-import {RoomRights} from "./RoomRights.sol";
+import {IATSFactory, IATSToken} from "./interfaces/IATS.sol";
 import {IBrokerIdentity} from "./interfaces/IBrokerIdentity.sol";
 
 /// RentMeOut core: property approval, room listings, atomic purchase and lifecycle.
@@ -24,6 +24,11 @@ import {IBrokerIdentity} from "./interfaces/IBrokerIdentity.sol";
 /// two cycles concern the same room. The cost is that the contract can no longer detect a
 /// double-booking across two approvals of the same room (the tags differ), so the registrar
 /// must not approve a fresh application for a room whose period is still live.
+///
+/// Each listing's room token is its own Asset Tokenization Studio security (supply 1, zero
+/// decimals), issued through the ATS factory inside createListing, so a listing cannot exist
+/// without its token. This contract is the token's only admin and agent. Its allowlist holds
+/// just the current custodian, which blocks resale, because a holder has nobody to send to.
 contract RentalRegistry is Roles {
     // ---------------------------------------------------------------- types
     enum Status {
@@ -65,6 +70,7 @@ contract RentalRegistry is Roles {
     error BrokerNotVerified();
     error PaymentFailed();
     error UsdcHasNoCode();
+    error AtsFactoryHasNoCode();
     error NotListingOwnerOrRegistrar();
     error NotFrozen();
     error AlreadyFrozen();
@@ -85,6 +91,7 @@ contract RentalRegistry is Roles {
         uint256 price,
         uint256 approvedRootUsed
     );
+    event RoomTokenIssued(uint256 indexed listingId, address indexed token);
     event ListingCancelled(uint256 indexed listingId, address indexed by);
     event RoomPurchased(uint256 indexed listingId, address indexed broker, address indexed payout, uint256 price);
     event RoomFrozen(uint256 indexed listingId, address indexed by, bytes32 reasonHash);
@@ -96,7 +103,21 @@ contract RentalRegistry is Roles {
     uint256 public immutable groupId; // approved-property set; this contract is the group admin
     address public immutable usdc;
     IBrokerIdentity public immutable identity;
-    RoomRights public immutable rights;
+    IATSFactory public immutable atsFactory;
+    address public immutable atsResolver;
+
+    // ATS role ids, from constants/roles.sol of asset-tokenization-contracts@8.0.0.
+    bytes32 private constant ROLE_ADMIN = 0x00;
+    // Mint, burn, forced transfer and freeze all accept the agent role.
+    bytes32 private constant ROLE_AGENT = 0x9830aa071a741c08855dd42130bdb0ff50f7bdf5a4b72f12181eefded0c6542b;
+    // Editing the allowlist needs its own role; the agent role does not cover it.
+    bytes32 private constant ROLE_CONTROL_LIST = 0x6ed9a91e996c6475ecdc28ecbdbe9bd1122fc62b30cdbe6da8271884b51ec74d;
+    bytes32 private constant EQUITY_CONFIG_ID = bytes32(uint256(1));
+    uint8 private constant REGULATION_TYPE_REG_S = 1;
+    uint8 private constant REGULATION_SUBTYPE_NONE = 0;
+    /// The factory rejects an empty ISIN and requires a valid checksum. A room right has no
+    /// real ISIN, so this is the same placeholder ats-issue.mjs uses.
+    string private constant PLACEHOLDER_ISIN = "US0378331005";
 
     /// Version counter for the approved-property root; bumped on every approve/revoke.
     uint256 public rootVersion;
@@ -106,6 +127,8 @@ contract RentalRegistry is Roles {
     uint256 public listingCount; // listing ids start at 1; id == token id
     mapping(uint256 => Listing) private _listings;
     mapping(uint256 => uint256[]) private _roomListings; // roomTag => listing ids
+    mapping(uint256 => IATSToken) public tokenOf; // listing id => its ATS room token
+    mapping(uint256 => address) private _buyer; // listing id => broker who bought it
 
     uint256 private _lock = 1;
 
@@ -117,17 +140,27 @@ contract RentalRegistry is Roles {
     }
 
     /// @param rootWindow seconds an older approved-set root still verifies after a change.
-    constructor(ISemaphore semaphore_, address usdc_, IBrokerIdentity identity_, address owner_, uint256 rootWindow)
-        Roles(owner_)
-    {
+    /// @param atsFactory_ the ATS factory that issues each room token.
+    /// @param atsResolver_ the ATS business logic resolver those tokens route through.
+    constructor(
+        ISemaphore semaphore_,
+        address usdc_,
+        IBrokerIdentity identity_,
+        address owner_,
+        uint256 rootWindow,
+        IATSFactory atsFactory_,
+        address atsResolver_
+    ) Roles(owner_) {
         // A call to an address with no code succeeds with empty returndata, which _pullUsdc
         // would read as a successful transfer - i.e. free rooms. Fail at deploy instead.
         if (usdc_.code.length == 0) revert UsdcHasNoCode();
+        if (address(atsFactory_).code.length == 0) revert AtsFactoryHasNoCode();
         semaphore = semaphore_;
         usdc = usdc_;
         identity = identity_;
         groupId = semaphore_.createGroup(address(this), rootWindow);
-        rights = new RoomRights(identity_, address(this));
+        atsFactory = atsFactory_;
+        atsResolver = atsResolver_;
     }
 
     // ------------------------------------------------- registrar: properties
@@ -172,8 +205,8 @@ contract RentalRegistry is Roles {
     }
 
     /// List one room for one period. Requires a proof of membership in the approved set, which
-    /// is spent by this call: the same approval cannot list this room again. The room token is
-    /// minted into this contract's escrow until bought or cancelled.
+    /// is spent by this call: the same approval cannot list this room again. An ATS token is
+    /// issued for the listing and minted into this contract's escrow until bought or cancelled.
     function createListing(
         ISemaphore.SemaphoreProof calldata proof,
         uint64 start,
@@ -205,7 +238,11 @@ contract RentalRegistry is Roles {
             Listing({payout: payout, start: start, end: end, status: Status.Available, price: price, roomTag: tag});
         ids.push(listingId);
 
-        rights.mint(address(this), listingId);
+        IATSToken token = _issueRoomToken(listingId);
+        tokenOf[listingId] = token;
+        token.addToControlList(address(this)); // the ATS allowlist applies to mints too
+        token.mint(address(this), 1);
+        emit RoomTokenIssued(listingId, address(token));
         emit ListingCreated(listingId, tag, payout, start, end, price, proof.merkleTreeRoot);
     }
 
@@ -215,7 +252,7 @@ contract RentalRegistry is Roles {
         if (msg.sender != l.payout && !isRegistrar[msg.sender]) revert NotListingOwnerOrRegistrar();
         if (l.status != Status.Available) revert NotAvailable();
         l.status = Status.Cancelled;
-        rights.burn(listingId);
+        _burnRoomToken(listingId);
         emit ListingCancelled(listingId, msg.sender);
     }
 
@@ -227,12 +264,19 @@ contract RentalRegistry is Roles {
         Listing storage l = _get(listingId);
         if (l.status != Status.Available) revert NotAvailable();
         if (block.timestamp >= l.end) revert ListingEnded();
-        if (rights.isFrozen(listingId)) revert NotAvailable();
+        if (isFrozen(listingId)) revert NotAvailable();
+        // A forced transfer skips the ATS allowlist check, so this is the real gate.
         if (!identity.isVerified(msg.sender)) revert BrokerNotVerified();
 
         l.status = Status.Sold; // effects before interactions
+        _buyer[listingId] = msg.sender;
         _pullUsdc(msg.sender, l.payout, l.price);
-        rights.agentTransfer(listingId, msg.sender);
+
+        IATSToken token = tokenOf[listingId];
+        token.addToControlList(msg.sender);
+        token.forcedTransfer(address(this), msg.sender, 1);
+        // Leaving the broker as the only allowed address is what blocks resale.
+        token.removeFromControlList(address(this));
 
         emit RoomPurchased(listingId, msg.sender, l.payout, l.price);
     }
@@ -247,15 +291,15 @@ contract RentalRegistry is Roles {
     function freezeRoom(uint256 listingId, bytes32 reasonHash) external onlyRegistrar {
         Listing storage l = _get(listingId);
         if (l.status != Status.Available && l.status != Status.Sold) revert NotAvailable();
-        if (rights.isFrozen(listingId)) revert AlreadyFrozen();
-        rights.setFrozen(listingId, true);
+        if (isFrozen(listingId)) revert AlreadyFrozen();
+        tokenOf[listingId].freezePartialTokens(_custodian(listingId), 1);
         emit RoomFrozen(listingId, msg.sender, reasonHash);
     }
 
     function unfreezeRoom(uint256 listingId, bytes32 reasonHash) external onlyRegistrar {
         _get(listingId);
-        if (!rights.isFrozen(listingId)) revert NotFrozen();
-        rights.setFrozen(listingId, false);
+        if (!isFrozen(listingId)) revert NotFrozen();
+        tokenOf[listingId].unfreezePartialTokens(_custodian(listingId), 1);
         emit RoomUnfrozen(listingId, msg.sender, reasonHash);
     }
 
@@ -267,7 +311,7 @@ contract RentalRegistry is Roles {
         if (l.status != Status.Available && l.status != Status.Sold) revert NothingToExpire();
         if (block.timestamp < l.end) revert NotYetExpired();
         l.status = Status.Expired;
-        rights.burn(listingId);
+        _burnRoomToken(listingId);
         emit RoomExpired(listingId);
     }
 
@@ -281,7 +325,71 @@ contract RentalRegistry is Roles {
         }
     }
 
+    // ------------------------------------------------------------ ATS token
+    function _issueRoomToken(uint256 listingId) private returns (IATSToken) {
+        return IATSToken(atsFactory.deployEquity(_equityData(listingId), _regulationData()));
+    }
+
+    /// Burns work on a frozen token too: a dispute must not stop a room being retired.
+    function _burnRoomToken(uint256 listingId) private {
+        IATSToken token = tokenOf[listingId];
+        address custodian = _custodian(listingId);
+        if (token.isFrozen(custodian)) token.unfreezePartialTokens(custodian, 1);
+        // A holder can redeem their own ATS token, and that must not block expiry.
+        if (token.balanceOf(custodian) != 0) token.burn(custodian, 1);
+    }
+
+    /// Who holds the token: this contract's escrow until sold, then the broker.
+    function _custodian(uint256 listingId) private view returns (address) {
+        address buyer = _buyer[listingId];
+        return buyer == address(0) ? address(this) : buyer;
+    }
+
+    function _equityData(uint256 listingId) private view returns (IATSFactory.EquityData memory data) {
+        address[] memory self = new address[](1);
+        self[0] = address(this);
+        IATSFactory.Rbac[] memory rbacs = new IATSFactory.Rbac[](3);
+        rbacs[0] = IATSFactory.Rbac(ROLE_ADMIN, self);
+        rbacs[1] = IATSFactory.Rbac(ROLE_AGENT, self);
+        rbacs[2] = IATSFactory.Rbac(ROLE_CONTROL_LIST, self);
+
+        IATSFactory.SecurityData memory security;
+        security.resolver = atsResolver;
+        security.maxSupply = 1; // one token per room period
+        security.resolverProxyConfiguration = IATSFactory.ResolverProxyConfiguration(EQUITY_CONFIG_ID, 1);
+        security.erc20MetadataInfo = IATSFactory.ERC20MetadataInfo(
+            string.concat("RentMeOut Room Rights #", _toString(listingId)), "RMO", PLACEHOLDER_ISIN, 0
+        );
+        security.rbacs = rbacs;
+        security.isControllable = true; // needed for forced transfer and burn
+        security.isWhiteList = true; // allowlist; false would make the same list a denylist
+
+        data.security = security;
+        data.equityDetails.currency = "USD";
+    }
+
+    function _regulationData() private pure returns (IATSFactory.RegulationData memory data) {
+        data.regulationType = REGULATION_TYPE_REG_S;
+        data.regulationSubType = REGULATION_SUBTYPE_NONE;
+        data.additionalSecurityData.info = "RentMeOut room rights";
+    }
+
+    function _toString(uint256 value) private pure returns (string memory) {
+        if (value == 0) return "0";
+        uint256 digits;
+        for (uint256 v = value; v != 0; v /= 10) digits++;
+        bytes memory out = new bytes(digits);
+        for (; value != 0; value /= 10) out[--digits] = bytes1(uint8(48 + value % 10));
+        return string(out);
+    }
+
     // -------------------------------------------------------------- views
+    /// Whether the room's token is frozen. The ATS token is the source of truth.
+    function isFrozen(uint256 listingId) public view returns (bool) {
+        IATSToken token = tokenOf[listingId];
+        return address(token) != address(0) && token.isFrozen(_custodian(listingId));
+    }
+
     function getListing(uint256 listingId) external view returns (Listing memory) {
         return _get(listingId);
     }
@@ -297,8 +405,12 @@ contract RentalRegistry is Roles {
 
     /// Current holder, or address(0) if unsold / cancelled / expired.
     function holderOf(uint256 listingId) public view returns (address) {
-        Status s = _get(listingId).status;
-        return s == Status.Sold ? rights.ownerOf(listingId) : address(0);
+        if (_get(listingId).status != Status.Sold) return address(0);
+        // The token decides: a broker who redeemed it no longer holds the room. A frozen
+        // token has left the spendable balance, but its holder still holds the room.
+        address buyer = _buyer[listingId];
+        IATSToken token = tokenOf[listingId];
+        return token.balanceOf(buyer) != 0 || token.isFrozen(buyer) ? buyer : address(0);
     }
 
     /// World ID nullifier hash of the current holder (0 if there is no holder). The tenant
@@ -316,7 +428,7 @@ contract RentalRegistry is Roles {
         if (l.status == Status.Expired) return RoomState.Expired;
         // Ended but nobody has called expire() yet: already expired for every reader.
         if (block.timestamp >= l.end) return RoomState.Expired;
-        if (rights.isFrozen(listingId)) return RoomState.Frozen;
+        if (isFrozen(listingId)) return RoomState.Frozen;
         return l.status == Status.Sold ? RoomState.Held : RoomState.Available;
     }
 
@@ -324,8 +436,8 @@ contract RentalRegistry is Roles {
     function isValid(uint256 listingId) public view returns (bool) {
         if (listingId == 0 || listingId > listingCount) return false;
         Listing storage l = _listings[listingId];
-        return l.status == Status.Sold && !rights.isFrozen(listingId) && block.timestamp >= l.start
-            && block.timestamp < l.end;
+        return l.status == Status.Sold && holderOf(listingId) != address(0) && !isFrozen(listingId)
+            && block.timestamp >= l.start && block.timestamp < l.end;
     }
 
     /// One call for the public verify page.

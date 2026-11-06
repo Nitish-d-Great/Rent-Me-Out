@@ -6,13 +6,13 @@ import {
   verifyChallenge,
   verifySessionProof,
   brokerIdentityRegistry,
-  unboundRoomRights,
+  rentalRegistryRights,
   type SessionResult,
   type SignedChallenge,
 } from "@/lib/world";
 
 const bindings = brokerIdentityRegistry;
-const rooms = unboundRoomRights;
+const rooms = rentalRegistryRights;
 
 interface Outcome {
   match: boolean;

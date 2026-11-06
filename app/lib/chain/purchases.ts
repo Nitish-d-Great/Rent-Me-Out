@@ -53,3 +53,26 @@ export async function readPurchases(broker?: `0x${string}`): Promise<Purchase[]>
     }))
     .reverse();
 }
+
+/** The purchase of one room, or null if nobody has bought it. */
+export async function readPurchaseOf(listingId: bigint): Promise<Purchase | null> {
+  const pub = createPublicClient({ chain: hederaTestnet, transport: http() });
+  const tip = await pub.getBlockNumber();
+  const logs = await pub.getLogs({
+    address: registryAddress(),
+    event: PURCHASED,
+    args: { listingId },
+    fromBlock: tip > LOOKBACK ? tip - LOOKBACK : 0n,
+    toBlock: tip,
+  });
+  const log = logs.at(-1);
+  if (!log) return null;
+  return {
+    listingId: listingId.toString(),
+    broker: (log.args.broker ?? "0x") as `0x${string}`,
+    payout: (log.args.payout ?? "0x") as `0x${string}`,
+    price: (Number(log.args.price ?? 0n) / 1e6).toFixed(2),
+    transactionHash: log.transactionHash,
+    blockNumber: log.blockNumber.toString(),
+  };
+}

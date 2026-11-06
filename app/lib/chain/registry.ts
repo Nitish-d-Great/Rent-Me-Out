@@ -25,7 +25,7 @@ export const REGISTRY_ABI = parseAbi([
   "function listingCount() view returns (uint256)",
   "function listingsOfRoom(uint256 roomTag) view returns (uint256[])",
   "function usdc() view returns (address)",
-  "function rights() view returns (address)",
+  "function tokenOf(uint256 listingId) view returns (address)",
   "function rootVersion() view returns (uint256)",
   "function approvedRoot() view returns (uint256, uint256)",
   "function listingMessage(uint256 room, uint64 start, uint64 end, uint256 price, address payout) view returns (uint256)",
@@ -58,6 +58,15 @@ export interface RoomRecord {
   /** DemoUSDC uses 6 decimals, like real USDC. */
   price: string;
   roomTag: string;
+  /** The room's own ATS security token, issued when it was listed. */
+  token: `0x${string}`;
+  /** The owner's wallet, which the sale pays. */
+  payout: `0x${string}`;
+  /** From the Arkiv index, when the room has been indexed. */
+  city?: string;
+  label?: string;
+  purchaseTx?: string;
+  arkivKey?: string;
 }
 
 export function registryAddress(): `0x${string}` {
@@ -73,6 +82,29 @@ export function publicClient() {
 const ZERO = "0x0000000000000000000000000000000000000000";
 
 /**
+ * A listing's token and payout never change, so one read is enough for the life of the
+ * process. Without this, every room on a page would pay extra RPC calls on each load.
+ */
+const fixedFactsCache = new Map<string, { token: `0x${string}`; payout: `0x${string}` }>();
+
+async function readFixedFacts(registry: `0x${string}`, listingId: bigint) {
+  const key = `${registry}:${listingId}`;
+  const cached = fixedFactsCache.get(key);
+  if (cached) return cached;
+  const [token, listing] = await Promise.all([
+    publicClient().readContract({
+      address: registry, abi: REGISTRY_ABI, functionName: "tokenOf", args: [listingId],
+    }),
+    publicClient().readContract({
+      address: registry, abi: REGISTRY_ABI, functionName: "getListing", args: [listingId],
+    }),
+  ]);
+  const facts = { token, payout: listing[0] };
+  fixedFactsCache.set(key, facts);
+  return facts;
+}
+
+/**
  * One call gives the tenant page everything: state, validity, holder, period, price.
  * `verifyRoom` exists for exactly this, so we don't stitch several reads together.
  *
@@ -84,7 +116,7 @@ export async function readRoom(listingId: bigint): Promise<RoomRecord | null> {
   try {
     // Both reads go out together: done in sequence this costs two round trips per
     // room, which multiplies across a page that lists several.
-    const [room, identity] = await Promise.all([
+    const [room, identity, facts] = await Promise.all([
       publicClient().readContract({
         address, abi: REGISTRY_ABI, functionName: "verifyRoom", args: [listingId],
       }),
@@ -94,6 +126,7 @@ export async function readRoom(listingId: bigint): Promise<RoomRecord | null> {
         })
         // Optional: an unsold room has no identity bound.
         .catch(() => 0n),
+      readFixedFacts(address, listingId),
     ]);
 
     const [state, valid, holder, start, end, price, roomTag] = room;
@@ -110,10 +143,31 @@ export async function readRoom(listingId: bigint): Promise<RoomRecord | null> {
       priceRaw: price.toString(),
       price: (Number(price) / 1e6).toFixed(2),
       roomTag: roomTag.toString(),
+      token: facts.token,
+      payout: facts.payout,
     };
   } catch {
     return null;
   }
+}
+
+/** The contract's Status enum: Available and Sold still hold a token. */
+const STATUS_AVAILABLE = 1;
+const STATUS_SOLD = 2;
+
+/**
+ * Whether a listing still has a token to burn.
+ *
+ * This reads the stored status on purpose. verifyRoom reports "expired" as soon as a
+ * period ends, before anyone has called expire(), so it cannot tell a burned token from
+ * one still waiting to be burned.
+ */
+export async function hasLiveToken(listingId: bigint): Promise<boolean> {
+  const listing = await publicClient().readContract({
+    address: registryAddress(), abi: REGISTRY_ABI, functionName: "getListing", args: [listingId],
+  });
+  const status = listing[3];
+  return status === STATUS_AVAILABLE || status === STATUS_SOLD;
 }
 
 /**
@@ -161,13 +215,24 @@ export function invalidateRooms(): void {
   rootVersionCache = null;
 }
 
-/** Every listing the registry knows about. Listing ids are 1-indexed. */
+/**
+ * Every listing the registry knows about. Listing ids are 1-indexed.
+ *
+ * Reading them all took 29-47s on Hashio with only three rooms, so nobody should have to
+ * wait for it twice. Once the window passes, callers get the last answer immediately
+ * while a refresh runs behind them. A write calls invalidateRooms(), which drops the
+ * cache, so a change someone just made is never hidden by the stale copy.
+ */
 export async function readAllRooms(): Promise<RoomRecord[]> {
-  if (roomsCache && Date.now() - roomsCache.at < ROOMS_TTL_MS) {
+  if (roomsCache) {
+    if (Date.now() - roomsCache.at >= ROOMS_TTL_MS) void refreshRooms().catch(() => undefined);
     return roomsCache.rooms;
   }
-  if (roomsInFlight) return roomsInFlight;
+  return refreshRooms();
+}
 
+function refreshRooms(): Promise<RoomRecord[]> {
+  if (roomsInFlight) return roomsInFlight;
   roomsInFlight = readAllRoomsUncached()
     .then((rooms) => {
       roomsCache = { at: Date.now(), rooms };
