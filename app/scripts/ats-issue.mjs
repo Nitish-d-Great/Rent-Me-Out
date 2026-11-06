@@ -56,8 +56,8 @@ const equityData = {
     maxSupply: 1n,                       // one token per room-period
     resolverProxyConfiguration: { key: EQUITY_CONFIG_ID, version: 1n },
     erc20MetadataInfo: {
-      name: "RentMeOut Room Rights",
-      symbol: "RMO",
+      name: process.env.TOKEN_NAME ?? "RentMeOut Room Rights",
+      symbol: process.env.TOKEN_SYMBOL ?? "RMO",
       isin: "US0378331005",   // checksum-valid ISIN; the factory rejects an empty one
       decimals: 0,
     },
@@ -73,7 +73,11 @@ const equityData = {
     arePartitionsProtected: false,
     isMultiPartition: false,
     isControllable: true,                // needed for forced transfer on sale
-    isWhiteList: false,
+    // An allowlist, not a denylist. getControlListType() returns false for a denylist,
+    // where addToControlList() BLOCKS an address -- the opposite of a KYC gate. With
+    // this true, only addresses the registrar has added can hold or receive the token,
+    // which is what "verified brokers only" means in ERC-3643 terms.
+    isWhiteList: true,
     clearingActive: false,
     internalKycActivated: false,
     erc20VotesActivated: false,
