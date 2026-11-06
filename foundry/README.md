@@ -55,3 +55,25 @@ their own device. Regenerate after changing the demo listing terms in `js/make-f
 - Call `verifyProof`, not `validateProof` (that one stores the nullifier and blocks relisting).
 - Use the proof's nullifier (scope = room index) as the private room tag for overlap checks.
 - Create the group from RentalRegistry so only the registrar flow can add or remove properties.
+
+## Rental contracts (`src/`)
+
+| Contract | Role |
+|---|---|
+| `RentalRegistry` | Core. Registrar approves/revokes properties (Semaphore group admin). Owners list rooms with a ZK membership proof; brokers buy atomically with USDC; freeze, cancel, expire. |
+| `RoomRights` | One supply-1, 0-decimal token per room period (listing id == token id). ERC-3643-style: recipient must be verified, freeze, forced burn. Holders cannot transfer (no resale). Created by `RentalRegistry`, which is its only agent. |
+| `BrokerIdentityRegistry` | Verified-broker list. One World ID nullifier <-> one wallet. |
+| `Roles` | Owner + registrar wallets. |
+
+**Registrar:** `approveProperty(applicationId, commitment)`, `revokeProperty(commitment, siblings)`, `rejectProperty(applicationId, reasonHash)`, `freezeRoom` / `unfreezeRoom(id, reasonHash)`, `cancelListing(id)`; identity: `registerBroker(wallet, nullifier)`, `removeBroker(wallet)`.
+**Owner:** `createListing(proof, start, end, price, payout)`. The proof message must equal `listingMessage(room, start, end, price, payout)` and scope = room index, so terms and payout cannot be altered.
+**Broker:** `buyRoom(id)` after `approve(registry, price)` on USDC.
+**Anyone:** `expire(id)` / `expireMany(ids)` (keeper), and views `verifyRoom(id)`, `isValid(id)`, `roomState(id)`, `holderOf(id)`, `approvedRoot()`, `listingsOfRoom(tag)`.
+
+Deploy (after `deploy.sh`): `USDC_ADDRESS=0x... forge script script/DeployRegistry.s.sol --rpc-url $HEDERA_RPC_URL --private-key $HEDERA_PRIVATE_KEY --broadcast --slow --legacy`.
+
+Caveats:
+- `RoomRights` is a self-contained stand-in for an ATS token (the ATS integration is unverified). `RentalRegistry` only needs mint/transfer/freeze/burn/ownerOf from it.
+- On Hedera, the buyer and owner payout must both be associated with the HTS USDC token, or `buyRoom` reverts with `PaymentFailed`.
+- Revoking a property: old proofs still work until the 5-minute root window ends; freeze already-listed rooms explicitly.
+- Hedera has no native timer for `expire`; a keeper (or scheduled transaction) must call it. `roomState`/`isValid` already report expiry correctly without it.
