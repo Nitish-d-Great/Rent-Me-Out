@@ -1,4 +1,10 @@
-export type RoomState = "available" | "held" | "frozen" | "expired";
+export type RoomState =
+  | "available"
+  | "held"
+  | "frozen"
+  | "expired"
+  /** Owner withdrew before a sale; the token is burned, as with expiry. */
+  | "cancelled";
 export type ApprovalState = "approved" | "pending" | "rejected" | "archived";
 export type VerificationState = "verified" | "unverified" | "pending";
 

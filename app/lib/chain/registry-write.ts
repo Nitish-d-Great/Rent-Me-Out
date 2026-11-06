@@ -1,7 +1,9 @@
 import "server-only";
 import { createWalletClient, http, keccak256, toBytes } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
-import { hederaTestnet, publicClient, REGISTRY_ABI, registryAddress } from "./registry";
+import {
+  hederaTestnet, invalidateRooms, publicClient, REGISTRY_ABI, registryAddress,
+} from "./registry";
 
 /**
  * Registrar-signed writes against RentalRegistry.
@@ -26,6 +28,15 @@ const FREEZE_ABI = [
     { type: "function", name: "rejectProperty", stateMutability: "nonpayable",
       inputs: [{ name: "applicationId", type: "bytes32" }, { name: "reasonHash", type: "bytes32" }],
       outputs: [] },
+    { type: "function", name: "cancelListing", stateMutability: "nonpayable",
+      inputs: [{ name: "listingId", type: "uint256" }], outputs: [] },
+    { type: "function", name: "expire", stateMutability: "nonpayable",
+      inputs: [{ name: "listingId", type: "uint256" }], outputs: [] },
+    { type: "function", name: "expireMany", stateMutability: "nonpayable",
+      inputs: [{ name: "listingIds", type: "uint256[]" }], outputs: [] },
+    { type: "error", name: "NotYetExpired", inputs: [] },
+    { type: "error", name: "NothingToExpire", inputs: [] },
+    { type: "error", name: "NotListingOwnerOrRegistrar", inputs: [] },
     { type: "error", name: "AlreadyFrozen", inputs: [] },
     { type: "error", name: "NotFrozen", inputs: [] },
     { type: "error", name: "NotRegistrar", inputs: [] },
@@ -83,6 +94,7 @@ async function write(
   if (receipt.status !== "success") {
     throw new Error(`transaction ${hash} reverted on-chain`);
   }
+  invalidateRooms();
   return { hash, reasonHash };
 }
 
@@ -118,6 +130,7 @@ export async function approveProperty(
   });
   const receipt = await publicClient().waitForTransactionReceipt({ hash, timeout: 120_000 });
   if (receipt.status !== "success") throw new Error(`approveProperty ${hash} reverted`);
+  invalidateRooms();
   return hash;
 }
 
@@ -142,5 +155,89 @@ export async function rejectProperty(
   });
   const receipt = await publicClient().waitForTransactionReceipt({ hash, timeout: 120_000 });
   if (receipt.status !== "success") throw new Error(`rejectProperty ${hash} reverted`);
+  invalidateRooms();
+  return hash;
+}
+
+/**
+ * Cancels an unsold listing and burns its token.
+ *
+ * The contract allows the listing's payout address or a registrar; this runs as the
+ * registrar. Only an Available listing can be cancelled -- once sold, the broker holds
+ * rights the owner cannot withdraw.
+ */
+export async function cancelListing(listingId: bigint): Promise<`0x${string}`> {
+  const account = registrar();
+  const address = registryAddress();
+
+  await publicClient().simulateContract({
+    address, abi: FREEZE_ABI, functionName: "cancelListing",
+    args: [listingId], account, gas: WRITE_GAS,
+  });
+
+  const wallet = createWalletClient({ account, chain: hederaTestnet, transport: http() });
+  const hash = await wallet.writeContract({
+    address, abi: FREEZE_ABI, functionName: "cancelListing",
+    args: [listingId], gas: WRITE_GAS, chain: hederaTestnet,
+  });
+  const receipt = await publicClient().waitForTransactionReceipt({ hash, timeout: 120_000 });
+  if (receipt.status !== "success") throw new Error(`cancelListing ${hash} reverted`);
+  invalidateRooms();
+  return hash;
+}
+
+/**
+ * Expires listings whose period has ended, burning their tokens.
+ *
+ * expire() is permissionless by design -- anyone may clean up a lapsed listing -- and
+ * expireMany skips entries that are not yet due instead of reverting the batch, so a
+ * sweep is safe to run at any time and simply does nothing when nothing is due.
+ *
+ * The server relays it so no one has to hold HBAR to keep the registry tidy.
+ */
+export async function expireListings(listingIds: bigint[]): Promise<`0x${string}`> {
+  const account = registrar();
+  const address = registryAddress();
+
+  await publicClient().simulateContract({
+    address, abi: FREEZE_ABI, functionName: "expireMany",
+    args: [listingIds], account, gas: WRITE_GAS,
+  });
+
+  const wallet = createWalletClient({ account, chain: hederaTestnet, transport: http() });
+  const hash = await wallet.writeContract({
+    address, abi: FREEZE_ABI, functionName: "expireMany",
+    args: [listingIds], gas: WRITE_GAS, chain: hederaTestnet,
+  });
+  const receipt = await publicClient().waitForTransactionReceipt({ hash, timeout: 120_000 });
+  if (receipt.status !== "success") throw new Error(`expireMany ${hash} reverted`);
+  invalidateRooms();
+  return hash;
+}
+
+/**
+ * Expires one listing.
+ *
+ * Uses expire() rather than expireMany() deliberately: expireMany skips entries that
+ * are not due, so a single-listing call through it would report success for work it
+ * did not do. expire() reverts with NotYetExpired, which the caller can be told.
+ */
+export async function expireListing(listingId: bigint): Promise<`0x${string}`> {
+  const account = registrar();
+  const address = registryAddress();
+
+  await publicClient().simulateContract({
+    address, abi: FREEZE_ABI, functionName: "expire",
+    args: [listingId], account, gas: WRITE_GAS,
+  });
+
+  const wallet = createWalletClient({ account, chain: hederaTestnet, transport: http() });
+  const hash = await wallet.writeContract({
+    address, abi: FREEZE_ABI, functionName: "expire",
+    args: [listingId], gas: WRITE_GAS, chain: hederaTestnet,
+  });
+  const receipt = await publicClient().waitForTransactionReceipt({ hash, timeout: 120_000 });
+  if (receipt.status !== "success") throw new Error(`expire ${hash} reverted`);
+  invalidateRooms();
   return hash;
 }
