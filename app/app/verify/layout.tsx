@@ -15,7 +15,7 @@ export default function VerifyLayout({ children }: { children: ReactNode }) {
         </div>
         {children}
         <div className="footer-bottom verify-mini-foot">
-          <span>Public verification · sample data · ETHGlobal Mumbai 2026</span>
+          <span>Public verification · Hedera testnet · ETHGlobal Mumbai 2026</span>
           <span>No account required</span>
         </div>
       </div>

@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { PresenceCheck } from "@/components/verify/presence-check";
+import { useLiveRooms, shortAddress } from "@/lib/chain/use-live-rooms";
 import { QRPanel } from "@/components/ui/qr-panel";
 import { StatusStamp } from "@/components/ui/status-stamp";
 import { VerifyBadge } from "@/components/ui/verify-badge";
@@ -10,7 +11,7 @@ import {
   demo,
   formatDate,
   property,
-  rooms,
+  rooms as sampleRooms,
   type RoomState,
 } from "@/lib/data";
 
@@ -30,6 +31,22 @@ export function VerifyClient({
   initialRoom?: string;
   initialState?: RoomState;
 }) {
+  // Live rights from RentalRegistry on Hedera. Falls back to the sample set only when
+  // the chain is unreachable or holds no listings -- and says which it is showing, so a
+  // sample room can never be mistaken for a real one.
+  const { rooms: liveRooms, status: liveStatus, rootVersion } = useLiveRooms();
+  const rooms = liveRooms ?? sampleRooms;
+  /** The holder actually recorded on-chain. Previously this rendered a hardcoded
+   *  constant, so a real period and a real identity sat next to a fake wallet. */
+  const [shareOrigin, setShareOrigin] = useState("https://rentmeout.xyz");
+  useEffect(() => {
+    setShareOrigin(window.location.origin);
+  }, []);
+
+  const holderShort = (r: { holder?: string }) =>
+    r.holder ? shortAddress(r.holder) : demo.brokerShort;
+
+
   const [roomId, setRoomId] = useState(
     rooms.some((room) => room.id === initialRoom) ? initialRoom : "r2",
   );
@@ -49,7 +66,17 @@ export function VerifyClient({
   const [mode, setMode] = useState<"live" | "simulated">("live");
   const [checkedAt, setCheckedAt] = useState<string | null>(null);
 
-  const room = rooms.find((entry) => entry.id === roomId) ?? rooms[1];
+  const room =
+    rooms.find((entry) => entry.id === roomId) ?? rooms[Math.min(1, rooms.length - 1)];
+
+  /** Describes the rooms actually on screen, not a fixed sample. */
+  const periodLabel =
+    liveStatus === "live" && rooms.length
+      ? `${formatDate(rooms[0].validFrom)} – ${formatDate(rooms[rooms.length - 1].validUntil)}`
+      : demo.periodLabel;
+
+  /** The link a tenant scans at the door: this host, this room. */
+  const shareUrl = `${shareOrigin}/verify/rmo-3b-andheri?room=${room.id}`;
   const roomIndex = rooms.findIndex((entry) => entry.id === room.id);
   const state = stateByRoom[room.id] ?? room.state;
 
@@ -57,6 +84,12 @@ export function VerifyClient({
     setLive("idle");
     setCheckedAt(null);
   }, [roomId, state]);
+
+  useEffect(() => {
+    if (liveRooms?.length && !liveRooms.some((r) => r.id === roomId)) {
+      setRoomId(liveRooms[0].id);
+    }
+  }, [liveRooms, roomId]);
 
   useEffect(() => {
     if (live !== "verifying") return;
@@ -77,6 +110,27 @@ export function VerifyClient({
   const held = state === "held";
   const canCheck = held && live !== "verifying";
 
+  // Until the registry answers, show nothing about who holds what. Falling back to the
+  // sample set here rendered a fabricated holder and root version as though they were
+  // real rights -- the one claim this page exists to make truthfully.
+  // Every hook above runs unconditionally, so this early return is safe.
+  if (liveStatus === "loading") {
+    return (
+      <main className="verify-page">
+        <header className="verify-head">
+          <p className="verify-head__eyebrow">Public check · no account needed</p>
+          <h1 className="verify-head__title">{property.nickname}</h1>
+          <p className="verify-head__sub">
+            {property.locality}, {property.city}
+          </p>
+        </header>
+        <section className="verify-panel">
+          <p className="dim">Reading rights from Hedera testnet…</p>
+        </section>
+      </main>
+    );
+  }
+
   return (
     <>
       <header className="verify-head">
@@ -89,7 +143,8 @@ export function VerifyClient({
           </span>
         </h1>
         <p>
-          {demo.periodLabel} · three rooms · registrar-approved property. Read
+          {periodLabel} · {rooms.length}{" "}
+          {rooms.length === 1 ? "room" : "rooms"} · registrar-approved property. Read
           the current holder from Hedera, then check the person at the door.
         </p>
       </header>
@@ -107,6 +162,18 @@ export function VerifyClient({
           </span>
         </div>
 
+        <p className="micro" style={{ marginBottom: 10 }}>
+          {liveStatus === "live" ? (
+            <span style={{ color: "green" }}>
+              ● Live from Hedera testnet · RentalRegistry
+            </span>
+          ) : (
+            <span style={{ color: "crimson" }}>
+              ● Sample data — the registry is unreachable or holds no listings. These
+              rooms are illustrative, not real rights.
+            </span>
+          )}
+        </p>
         <div className="verify-room-list">
           {rooms.map((entry, index) => {
             const entryState =
@@ -127,7 +194,7 @@ export function VerifyClient({
                     {formatDate(entry.validFrom)} –{" "}
                     {formatDate(entry.validUntil)} ·{" "}
                     {entryState === "held"
-                      ? `holder ${demo.brokerShort}`
+                      ? `holder ${holderShort(entry)}`
                       : "one verified broker"}
                   </p>
                 </span>
@@ -154,7 +221,7 @@ export function VerifyClient({
                 <div>
                   <strong>Verified broker holds this room.</strong>
                   <span>
-                    Holder wallet · <span className="mono">{demo.brokerShort}</span>
+                    Holder wallet · <span className="mono">{holderShort(room)}</span>
                   </span>
                 </div>
                 {room.holderNullifier && (
@@ -179,7 +246,7 @@ export function VerifyClient({
                 <div className="verify-check">
                   <span>Property approval</span>
                   <span>
-                    Registrar-approved · root v{demo.rootVersion}
+                    Registrar-approved · root v{rootVersion ?? demo.rootVersion}
                   </span>
                 </div>
                 <div className="verify-check">
@@ -204,7 +271,7 @@ export function VerifyClient({
               <div className="verify-result__checks" style={{ marginTop: 16 }}>
                 <div className="verify-check">
                   <span>Holder on record</span>
-                  <span className="mono">{demo.brokerShort}</span>
+                  <span className="mono">{holderShort(room)}</span>
                 </div>
                 <div className="verify-check">
                   <span>Rights period</span>
@@ -462,11 +529,11 @@ export function VerifyClient({
       )}
 
       <section className="mt-32">
-        <QRPanel value="https://rentmeout.xyz/verify/rmo-3b-andheri?room=r2" />
+        <QRPanel value={shareUrl} title={`${room.name} · verification link`} />
       </section>
 
       <div className="demo-states">
-        <span className="demo-states__label">Demo states · Room 2</span>
+        <span className="demo-states__label">Demo states · {room.name}</span>
         {(["available", "held", "frozen", "expired"] as RoomState[]).map(
           (demoState) => (
             <button
