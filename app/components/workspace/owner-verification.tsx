@@ -42,7 +42,7 @@ export function OwnerVerification() {
         </p>
         <div className="flex wrap gap-8" style={{ marginTop: 12 }}>
           {!connected ? (
-            <button type="button" className="btn btn--small" onClick={connect}>
+            <button type="button" className="btn btn--small" onClick={() => void connect()}>
               Connect wallet
             </button>
           ) : (

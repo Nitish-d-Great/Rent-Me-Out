@@ -49,7 +49,10 @@ export const BROKER_IDENTITY_ABI = parseAbi([
   "function sessionMatchesHolder(bytes32 sessionKey, address holder) view returns (bool)",
   "function isRegistrar(address account) view returns (bool)",
   "error IdentityAlreadyBound(address existingWallet)",
-  "error WalletAlreadyHasIdentity(bytes32 existingBindingKey)",
+  // uint256, not bytes32 -- the registry stores the identity as a number, so the error
+  // carries one. Declared wrong, viem cannot decode the revert and a clean 409 arrives
+  // as an opaque 500. Selector confirmed: 0x2a1b47e1.
+  "error WalletAlreadyHasIdentity(uint256 existingIdentity)",
   "error SessionAlreadyBound(address existingWallet)",
   "error NotRegistrar()",
   "error ZeroAddress()",

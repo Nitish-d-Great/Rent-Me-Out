@@ -304,7 +304,7 @@ export function ListingForm() {
                       type="button"
                       className="btn btn--small"
                       style={{ marginTop: 12 }}
-                      onClick={connect}
+                      onClick={() => void connect()}
                     >
                       Connect wallet
                     </button>
