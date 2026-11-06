@@ -1,68 +1,15 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { fetchActiveRoomListings } from "@/lib/arkiv";
+import { useMemo, useState } from "react";
 import { RoomCard, type RoomCardData } from "./room-card";
 
 export function MarketplaceClient({ rooms }: { rooms: RoomCardData[] }) {
-  const [arkivRooms, setArkivRooms] = useState<RoomCardData[]>([]);
-  const [arkivStatus, setArkivStatus] = useState<"loading" | "ready" | "offline">("loading");
   const [query, setQuery] = useState("");
   const [price, setPrice] = useState("any");
   const [availability, setAvailability] = useState("all");
 
-  useEffect(() => {
-    let active = true;
-    fetchActiveRoomListings()
-      .then((entities) => {
-        if (!active) return;
-        const fetchedRooms = entities.map((entity, index): RoomCardData => {
-          const startDate = new Date(Number(entity.startAt.value) * 1000)
-            .toISOString()
-            .slice(0, 10);
-          const endDate = new Date(Number(entity.endAt.value) * 1000)
-            .toISOString()
-            .slice(0, 10);
-
-          return {
-            id: entity.roomId.value,
-            tokenId: entity.$key,
-            name: entity.roomName.value,
-            note: entity.description.value,
-            price: Number(entity.price.value),
-            state: "available",
-            validFrom: startDate,
-            validUntil: endDate,
-            tint: `var(--room-${(index % 3) + 1})`,
-            propertyId: entity.propertyId.value,
-            propertyName: entity.propertyName.value,
-            locality: entity.locality.value,
-            city: entity.city.value,
-            periodLabel: `${startDate} – ${endDate}`,
-            propertyApproved: false,
-            arkivRecord: true,
-          };
-        });
-        setArkivRooms(fetchedRooms);
-        setArkivStatus("ready");
-      })
-      .catch(() => {
-        if (active) setArkivStatus("offline");
-      });
-
-    return () => {
-      active = false;
-    };
-  }, []);
-
-  const allRooms = useMemo(() => {
-    const byId = new Map(rooms.map((room) => [room.id, room]));
-    for (const room of arkivRooms) byId.set(room.id, room);
-    return [...byId.values()];
-  }, [arkivRooms, rooms]);
-
   const filtered = useMemo(() => {
-    return allRooms.filter((room) => {
+    return rooms.filter((room) => {
       const haystack =
         `${room.name} ${room.propertyName} ${room.locality} ${room.city} ${room.note}`.toLowerCase();
       const matchesQuery = haystack.includes(query.toLowerCase());
@@ -76,7 +23,7 @@ export function MarketplaceClient({ rooms }: { rooms: RoomCardData[] }) {
         (availability === "held" && room.state === "held");
       return matchesQuery && matchesPrice && matchesAvailability;
     });
-  }, [allRooms, availability, price, query]);
+  }, [availability, price, query, rooms]);
 
   return (
     <>
@@ -120,21 +67,10 @@ export function MarketplaceClient({ rooms }: { rooms: RoomCardData[] }) {
         </span>
       </div>
 
-      {arkivStatus === "offline" && (
-        <p className="small dim" role="status" style={{ marginTop: 14 }}>
-          Arkiv is unavailable right now; showing the sample listings.
-        </p>
-      )}
-      {arkivStatus === "ready" && arkivRooms.length > 0 && (
-        <p className="small dim" role="status" style={{ marginTop: 14 }}>
-          Arkiv results are public records. Confirm property approval and current room rights on Hedera.
-        </p>
-      )}
-
       {filtered.length > 0 ? (
         <div className="room-grid">
           {filtered.map((room) => {
-            const index = allRooms.findIndex((entry) => entry.id === room.id);
+            const index = rooms.findIndex((entry) => entry.id === room.id);
             return <RoomCard key={room.id} room={room} index={index} />;
           })}
         </div>

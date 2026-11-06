@@ -49,12 +49,6 @@ type PageProps = {
   params: Promise<{ roomId: string }>;
 };
 
-export const dynamicParams = false;
-
-export function generateStaticParams() {
-  return rooms.map((room) => ({ roomId: room.id }));
-}
-
 export async function generateMetadata({
   params,
 }: PageProps): Promise<Metadata> {
