@@ -22,6 +22,7 @@ const stateCopy: Record<RoomState, string> = {
   held: "Sold",
   frozen: "Frozen",
   expired: "Expired",
+  cancelled: "Cancelled",
 };
 
 export function VerifyClient({

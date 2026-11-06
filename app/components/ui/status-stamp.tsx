@@ -5,6 +5,7 @@ const labels: Record<RoomState, string> = {
   held: "Sold",
   frozen: "Frozen",
   expired: "Expired",
+  cancelled: "Cancelled",
 };
 
 const className: Record<RoomState, string> = {
@@ -12,6 +13,8 @@ const className: Record<RoomState, string> = {
   held: "stamp stamp--sold",
   frozen: "stamp stamp--frozen",
   expired: "stamp stamp--expired",
+  // Both mean a burned token with no holder, so they share a style.
+  cancelled: "stamp stamp--expired",
 };
 
 export function StatusStamp({

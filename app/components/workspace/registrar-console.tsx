@@ -53,6 +53,8 @@ export function RegistrarConsole() {
   const [decisionError, setDecisionError] = useState<string | null>(null);
   const [freezeError, setFreezeError] = useState<string | null>(null);
   const [freezing, setFreezing] = useState<string | null>(null);
+  const [sweeping, setSweeping] = useState(false);
+  const [sweepNote, setSweepNote] = useState<string | null>(null);
 
   const [apps, setApps] = useState(seedApplications);
   const [selectedId, setSelectedId] = useState("APP-1042");
@@ -169,6 +171,78 @@ export function RegistrarConsole() {
    * Freeze or unfreeze on-chain, signed by the registrar on the server.
    * Local state is only updated once the transaction has actually succeeded.
    */
+  const runLifecycle = async (
+    listingId: string,
+    action: "cancel" | "expire",
+    label: string,
+  ) => {
+    setFreezing(listingId);
+    setFreezeError(null);
+    setFreezeTx(null);
+    try {
+      const res = await fetch(`/api/rooms/${listingId}/lifecycle`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ action }),
+      });
+      const data = (await res.json()) as {
+        ok?: boolean; error?: string; state?: string | null; transactionHash?: string;
+      };
+      if (!res.ok || !data.ok) {
+        setFreezeError(
+          data.error === "already_sold"
+            ? "This room has been sold, so it can no longer be cancelled."
+            : data.error === "not_yet_expired"
+              ? "This listing's period has not ended yet."
+              : (data.error ?? "lifecycle_failed"),
+        );
+        return;
+      }
+      setRoomStates((prev) => ({
+        ...prev,
+        [listingId]: (data.state as RoomState) ?? "expired",
+      }));
+      setFreezeTx(data.transactionHash ?? null);
+      pushAudit(
+        action === "cancel" ? "Listing cancelled" : "Room expired",
+        label,
+        action === "cancel" ? "Withdrawn before sale" : "Period ended · token burned",
+      );
+    } catch {
+      setFreezeError("network_error");
+    } finally {
+      setFreezing(null);
+    }
+  };
+
+  /** Expires every listing whose period has ended. Safe to run when none are due. */
+  const runSweep = async () => {
+    setSweeping(true);
+    setFreezeError(null);
+    setFreezeTx(null);
+    try {
+      const res = await fetch("/api/rooms/sweep", { method: "POST" });
+      const data = (await res.json()) as {
+        ok?: boolean; error?: string; expired?: string[]; transactionHash?: string;
+      };
+      if (!res.ok || !data.ok) {
+        setFreezeError(data.error ?? "sweep_failed");
+        return;
+      }
+      if (!data.expired?.length) {
+        setSweepNote("No listings are due to expire.");
+        return;
+      }
+      setFreezeTx(data.transactionHash ?? null);
+      setSweepNote(`Expired ${data.expired.length} listing(s): ${data.expired.join(", ")}`);
+      pushAudit("Expiry sweep", `${data.expired.length} listing(s)`, "Period ended · tokens burned");
+    } catch {
+      setFreezeError("network_error");
+    } finally {
+      setSweeping(false);
+    }
+  };
+
   const runFreeze = async (
     listingId: string,
     action: "freeze" | "unfreeze",
@@ -442,6 +516,14 @@ export function RegistrarConsole() {
       <section className="panel" id="properties" style={{ marginTop: 24 }}>
         <div className="panel__head">
           <h2>Rooms + dispute controls</h2>
+          <button
+            type="button"
+            className="btn btn--ghost btn--small"
+            disabled={sweeping || liveStatus !== "live"}
+            onClick={() => void runSweep()}
+          >
+            {sweeping ? "Running expiry sweep…" : "Run expiry sweep"}
+          </button>
           <span className="micro">
             {liveStatus === "live" ? (
               <span style={{ color: "green" }}>● Live · RentalRegistry</span>
@@ -470,7 +552,17 @@ export function RegistrarConsole() {
                 </tr>
               </thead>
               <tbody>
-                {roomList.map((room) => (
+                {liveStatus !== "live" && (
+                  <tr>
+                    <td colSpan={6} className="dim micro">
+                      {liveStatus === "loading"
+                        ? "Reading listings from Hedera…"
+                        : "The registry is unreachable. No listings are shown, because sample rooms would name holders who do not hold anything."}
+                    </td>
+                  </tr>
+                )}
+                {liveStatus === "live" &&
+                  roomList.map((room) => (
                   <tr key={room.id}>
                     <td>
                       <strong>Room {room.index + 1}</strong>
@@ -480,11 +572,14 @@ export function RegistrarConsole() {
                     </td>
                     <td className="mono">{room.tokenId}</td>
                     <td className="mono">
-                      {room.state === "held" || room.state === "frozen"
-                        ? demo.brokerShort
+                      {(room.state === "held" || room.state === "frozen") &&
+                      room.holder
+                        ? `${room.holder.slice(0, 6)}…${room.holder.slice(-4)}`
                         : "—"}
                     </td>
-                    <td>{demo.periodLabel}</td>
+                    <td>
+                      {formatDate(room.validFrom)} – {formatDate(room.validUntil)}
+                    </td>
                     <td>
                       <StatusStamp state={room.state} />
                     </td>
@@ -493,7 +588,7 @@ export function RegistrarConsole() {
                         <button
                           type="button"
                           className="btn btn--ghost btn--small"
-                          disabled={freezing === room.id}
+                          disabled={freezing === room.id || liveStatus !== "live"}
                           onClick={() =>
                             void runFreeze(
                               room.id,
@@ -516,17 +611,43 @@ export function RegistrarConsole() {
                         >
                           Freeze
                         </button>
+                      ) : room.state === "available" ? (
+                        <button
+                          type="button"
+                          className="btn btn--ghost btn--small"
+                          disabled={freezing === room.id || liveStatus !== "live"}
+                          onClick={() =>
+                            void runLifecycle(
+                              room.id,
+                              "cancel",
+                              `${room.name} · Ashoka Residency`,
+                            )
+                          }
+                        >
+                          {freezing === room.id ? "Cancelling…" : "Cancel listing"}
+                        </button>
+                      ) : room.state === "expired" ||
+                        room.state === "cancelled" ? (
+                        <span className="dim" style={{ fontSize: 10.5 }}>
+                          Token burned
+                        </span>
                       ) : (
                         <span className="dim" style={{ fontSize: 10.5 }}>
                           No held right
                         </span>
                       )}
                     </td>
-                  </tr>
-                ))}
+                    </tr>
+                  ))}
               </tbody>
             </table>
           </div>
+
+          {sweepNote && !freezeTx && (
+            <div className="panel__body" style={{ borderTop: "1px solid var(--line)" }}>
+              <p className="micro dim">{sweepNote}</p>
+            </div>
+          )}
 
           {(freezeTx || freezeError) && (
             <div className="panel__body" style={{ borderTop: "1px solid var(--line)" }}>

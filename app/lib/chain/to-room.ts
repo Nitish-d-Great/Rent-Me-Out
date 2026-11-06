@@ -11,10 +11,14 @@ import type { RoomRecord } from "./registry";
 const TINTS = ["tint-a", "tint-b", "tint-c"];
 
 export function recordToRoom(r: RoomRecord, index = 0): Room {
-  // The registry has no "none" state; anything unrecognised is treated as available so
-  // the UI never claims rights that do not exist.
+  // "none" means the listing does not exist; everything else maps straight through.
+  // Cancelled is kept distinct from expired: both burn the token, but a registrar
+  // needs to tell "withdrawn before sale" from "period ran out".
   const state: RoomState =
-    r.state === "held" || r.state === "frozen" || r.state === "expired"
+    r.state === "held" ||
+    r.state === "frozen" ||
+    r.state === "expired" ||
+    r.state === "cancelled"
       ? (r.state as RoomState)
       : "available";
 
