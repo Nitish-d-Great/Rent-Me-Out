@@ -4,12 +4,14 @@
   "SemaphoreVerifier": "0xab3a842180e0031B438c12a707934e0Bef49C480",
   "chainId": 296,
   "BrokerIdentityRegistry": "0xF3A8f444502A2B9Be6B9AdA344c9A1b07Db4B0dC",
-  "RentalRegistry": "0x7bd8aBCD48A7282868E88770089Fa5cF8A315EEa",
+  "RentalRegistry": "0x842f6574e635b8E841757CC926c5947C3Da6eFAF",
   "RoomRights": "0x929f2547c0aa473Dcd22f4a7897C20782c1A1BC2",
   "USDC": "0xa8C449bDB4958Cf63b4f5a8Dcf41b6E5a95bEd9e",
-  "approvedGroupId": 1,
+  "approvedGroupId": 2,
   "owner": "0xE47DBA74b5F91f216D9456d1d6698b6907c391dF",
   "registrars": [
     "0xE47DBA74b5F91f216D9456d1d6698b6907c391dF"
-  ]
+  ],
+  "AtsFactory": "0xd1F118A40f3b02883D35909eF2517e7EDd78379d",
+  "AtsResolver": "0xBA2D5FC2083A0b8f164c50e65d782087fBA18E0a"
 }

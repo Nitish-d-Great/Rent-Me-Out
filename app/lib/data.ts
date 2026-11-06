@@ -11,6 +11,8 @@ export type VerificationState = "verified" | "unverified" | "pending";
 export interface Room {
   id: string;
   tokenId: string;
+  /** The room's ATS token. Only live listings have one; sample rooms do not. */
+  tokenAddress?: string;
   name: string;
   note: string;
   price: number;

@@ -5,7 +5,6 @@ import {Script, console} from "forge-std/Script.sol";
 import {RentalRegistry} from "../src/RentalRegistry.sol";
 import {BrokerIdentityRegistry} from "../src/BrokerIdentityRegistry.sol";
 import {DemoUSDC} from "../src/DemoUSDC.sol";
-import {RoomRights} from "../src/RoomRights.sol";
 import {Fixture} from "../src/Fixture.sol";
 
 /// Drives the whole product flow against a live deployment, using the demo fixture:
@@ -21,7 +20,6 @@ contract DemoFlow is Script {
         RentalRegistry reg = RentalRegistry(vm.parseJsonAddress(j, ".RentalRegistry"));
         BrokerIdentityRegistry ids = BrokerIdentityRegistry(vm.parseJsonAddress(j, ".BrokerIdentityRegistry"));
         DemoUSDC usdc = DemoUSDC(vm.parseJsonAddress(j, ".USDC"));
-        RoomRights rights = reg.rights();
 
         address me = msg.sender;
         Fixture.Terms memory t = Fixture.terms();
@@ -54,14 +52,13 @@ contract DemoFlow is Script {
 
         vm.stopBroadcast();
 
-        _report(reg, ids, usdc, rights, id, sessKey, t.payout);
+        _report(reg, ids, usdc, id, sessKey, t.payout);
     }
 
     function _report(
         RentalRegistry reg,
         BrokerIdentityRegistry ids,
         DemoUSDC usdc,
-        RoomRights rights,
         uint256 id,
         bytes32 sessKey,
         address payout
@@ -72,7 +69,8 @@ contract DemoFlow is Script {
         console.log("state (2=Held)    ", uint256(reg.roomState(id)));
         console.log("valid now         ", reg.isValid(id));
         console.log("holder            ", holder);
-        console.log("token holder      ", rights.ownerOf(id));
+        console.log("ATS room token    ", address(reg.tokenOf(id)));
+        console.log("broker token bal  ", reg.tokenOf(id).balanceOf(holder));
         console.log("period start      ", l.start);
         console.log("period end        ", l.end);
         console.log("price (6dp)       ", l.price);
