@@ -7,6 +7,7 @@ import { getOrCreateIdentity } from "@/lib/chain/owner-identity";
 import { useWalletVerified } from "@/lib/chain/use-owner";
 import { VerifyBadge } from "@/components/ui/verify-badge";
 import { WorldIdButton } from "@/components/ui/world-id-button";
+import { LocationPicker, type PropertyCoordinates } from "./location-picker";
 
 type SubmitState = "idle" | "submitting" | "submitted";
 
@@ -35,6 +36,7 @@ export function PropertyForm() {
   const [commitment, setCommitment] = useState<string | null>(null);
   const [deed, setDeed] = useState<string>("");
   const [deedFile, setDeedFile] = useState<Blob | null>(null);
+  const [location, setLocation] = useState<PropertyCoordinates | null>(null);
   const [form, setForm] = useState({
     nickname: "Bandra studio",
     locality: "Bandra East",
@@ -50,6 +52,7 @@ export function PropertyForm() {
     form.locality.trim() &&
     form.city.trim() &&
     form.rooms &&
+    location &&
     deed &&
     form.privacy;
   const canSubmit = connected && verified && Boolean(required);
@@ -81,6 +84,8 @@ export function PropertyForm() {
           nickname: form.nickname.trim(),
           locality: form.locality.trim(),
           city: form.city.trim(),
+          latitudeE6: Math.round(location!.latitude * 1_000_000),
+          longitudeE6: Math.round(location!.longitude * 1_000_000),
           rooms: Number(form.rooms),
           deedName: deed,
           deedBase64,
@@ -342,6 +347,9 @@ export function PropertyForm() {
               />
             </div>
           </div>
+          <div style={{ marginTop: 18 }}>
+            <LocationPicker value={location} onChange={setLocation} />
+          </div>
         </div>
       </section>
 
@@ -408,8 +416,7 @@ export function PropertyForm() {
                 setForm({ ...form, privacy: event.target.checked })
               }
             />
-            I understand the privacy notice and that this is not a title
-            guarantee.
+            I understand the deed and proposed location are encrypted for registrar review, the exact pin becomes public and permanent if listed, and neither the pin nor this process is a title guarantee.
           </label>
         </div>
       </section>

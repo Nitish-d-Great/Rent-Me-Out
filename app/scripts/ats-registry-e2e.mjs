@@ -46,14 +46,14 @@ const chain = defineChain({
 
 const REG_ABI = parseAbi([
   "function approveProperty(bytes32 applicationId, uint256 commitment)",
-  "function createListing((uint256 merkleTreeDepth,uint256 merkleTreeRoot,uint256 nullifier,uint256 message,uint256 scope,uint256[8] points) proof, uint64 start, uint64 end, uint256 price, address payout) returns (uint256)",
+  "function createListing((uint256 merkleTreeDepth,uint256 merkleTreeRoot,uint256 nullifier,uint256 message,uint256 scope,uint256[8] points) proof, uint64 start, uint64 end, uint256 price, address payout, int32 latitudeE6, int32 longitudeE6) returns (uint256)",
   "function buyRoom(uint256 listingId)",
   "function freezeRoom(uint256 listingId, bytes32 reasonHash)",
   "function unfreezeRoom(uint256 listingId, bytes32 reasonHash)",
   "function expire(uint256 listingId)",
   "function approvedRoot() view returns (uint256, uint256)",
   "function listingCount() view returns (uint256)",
-  "function listingMessage(uint256 room, uint64 start, uint64 end, uint256 price, address payout) view returns (uint256)",
+  "function listingMessage(uint256 room, uint64 start, uint64 end, uint256 price, address payout, int32 latitudeE6, int32 longitudeE6) view returns (uint256)",
   "function tokenOf(uint256 listingId) view returns (address)",
   "function holderOf(uint256 listingId) view returns (address)",
   "function isValid(uint256 listingId) view returns (bool)",
@@ -184,8 +184,10 @@ const terms = {
   end: BigInt(now + PERIOD_SECONDS),
   price: 1_000_000n,
   payout: account.address,
+  latitudeE6: 19_119_700,
+  longitudeE6: 72_846_400,
 };
-const message = await reg("listingMessage", [terms.room, terms.start, terms.end, terms.price, terms.payout]);
+const message = await reg("listingMessage", [terms.room, terms.start, terms.end, terms.price, terms.payout, terms.latitudeE6, terms.longitudeE6]);
 const proof = await generateProof(owner, group, message, terms.room);
 const listing = await write("createListing", REGISTRY, REG_ABI, "createListing", [{
   merkleTreeDepth: BigInt(proof.merkleTreeDepth),
@@ -194,7 +196,7 @@ const listing = await write("createListing", REGISTRY, REG_ABI, "createListing",
   message: BigInt(proof.message),
   scope: BigInt(proof.scope),
   points: proof.points.map(BigInt),
-}, terms.start, terms.end, terms.price, terms.payout], LISTING_GAS);
+}, terms.start, terms.end, terms.price, terms.payout, terms.latitudeE6, terms.longitudeE6], LISTING_GAS);
 
 const id = await reg("listingCount");
 const TOKEN = await reg("tokenOf", [id]);

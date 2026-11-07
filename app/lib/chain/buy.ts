@@ -28,6 +28,16 @@ const USDC_ABI = parseAbi([
 
 const REGISTRY_BUY_ABI = parseAbi([
   "function buyRoom(uint256 listingId)",
+  "function getListing(uint256 listingId) view returns (address payout, uint64 start, uint64 end, uint8 status, uint256 price, uint256 roomTag, int32 latitudeE6, int32 longitudeE6)",
+  "error BrokerNotVerified()",
+  "error NotAvailable()",
+  "error PaymentFailed()",
+  "error ListingEnded()",
+  "error NoSuchListing()",
+]);
+
+const LEGACY_REGISTRY_BUY_ABI = parseAbi([
+  "function buyRoom(uint256 listingId)",
   "function getListing(uint256 listingId) view returns (address payout, uint64 start, uint64 end, uint8 status, uint256 price, uint256 roomTag)",
   "error BrokerNotVerified()",
   "error NotAvailable()",
@@ -72,6 +82,7 @@ export interface BuyParams {
   broker: Hex;
   usdc: Hex;
   registry: Hex;
+  legacyRegistry?: boolean;
   onProgress?: (progress: BuyProgress) => void;
 }
 
@@ -80,10 +91,11 @@ export interface BuyParams {
  * Returns the purchase transaction hash once it has actually succeeded.
  */
 export async function buyRoom({
-  listingId, broker, usdc, registry, onProgress,
+  listingId, broker, usdc, registry, legacyRegistry = false, onProgress,
 }: BuyParams): Promise<Hex> {
   const say = (p: BuyProgress) => onProgress?.(p);
   const { pub, wallet } = clients(broker);
+  const registryAbi = legacyRegistry ? LEGACY_REGISTRY_BUY_ABI : REGISTRY_BUY_ABI;
 
   const settle = async (hash: Hex, label: string) => {
     // writeContract resolves on submission; without this wait a reverted step would
@@ -95,7 +107,7 @@ export async function buyRoom({
 
   say({ stage: "checking" });
   const [, , , status, price] = await pub.readContract({
-    address: registry, abi: REGISTRY_BUY_ABI, functionName: "getListing",
+    address: registry, abi: registryAbi, functionName: "getListing",
     args: [listingId],
   });
   if (status !== 1) throw new Error("not_available");
@@ -131,12 +143,12 @@ export async function buyRoom({
   // Simulate first so a revert (an unverified broker, say) surfaces as a decoded error
   // before the broker is asked to sign anything.
   await pub.simulateContract({
-    address: registry, abi: REGISTRY_BUY_ABI, functionName: "buyRoom",
+    address: registry, abi: registryAbi, functionName: "buyRoom",
     args: [listingId], account: broker, gas: GAS,
   });
 
   const hash = await wallet.writeContract({
-    address: registry, abi: REGISTRY_BUY_ABI, functionName: "buyRoom",
+    address: registry, abi: registryAbi, functionName: "buyRoom",
     args: [listingId], gas: GAS, chain: hederaTestnet,
   });
   say({ stage: "confirming", hash });

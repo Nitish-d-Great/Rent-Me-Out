@@ -27,6 +27,8 @@ interface SealedDetails {
   nickname: string;
   locality: string;
   city: string;
+  latitudeE6?: number;
+  longitudeE6?: number;
   rooms: number;
   deedName: string;
   deedRef: string;
@@ -51,6 +53,8 @@ export interface NewApplication {
   nickname: string;
   locality: string;
   city: string;
+  latitudeE6: number;
+  longitudeE6: number;
   rooms: number;
   deedName: string;
   deed: Uint8Array;
@@ -144,6 +148,8 @@ export async function addApplication(app: NewApplication): Promise<ApplicationRo
     nickname: app.nickname,
     locality: app.locality,
     city: app.city,
+    latitudeE6: app.latitudeE6,
+    longitudeE6: app.longitudeE6,
     rooms: app.rooms,
     deedName: app.deedName,
     deedRef,

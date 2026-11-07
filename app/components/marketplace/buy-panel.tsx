@@ -33,7 +33,7 @@ export function BuyPanel({ room, live = false }: { room: Room; live?: boolean })
       return;
     }
     const usdc = process.env.NEXT_PUBLIC_DEMO_USDC_ADDRESS;
-    const registry = process.env.NEXT_PUBLIC_RENTAL_REGISTRY_ADDRESS;
+    const registry = room.registryAddress ?? process.env.NEXT_PUBLIC_RENTAL_REGISTRY_ADDRESS;
     if (!usdc || !registry) {
       setError("Contract addresses are not configured.");
       return;
@@ -44,10 +44,11 @@ export function BuyPanel({ room, live = false }: { room: Room; live?: boolean })
     setStep("processing");
     try {
       const hash = await buyRoom({
-        listingId: BigInt(room.id),
+        listingId: BigInt(room.listingNumber ?? room.id.replace(/^legacy-/, "")),
         broker: address as `0x${string}`,
         usdc: usdc as `0x${string}`,
         registry: registry as `0x${string}`,
+        legacyRegistry: room.legacyRegistry,
         onProgress: (p) => {
           setStage(p.stage);
           if (p.hash) setTxHash(p.hash);
@@ -57,7 +58,9 @@ export function BuyPanel({ room, live = false }: { room: Room; live?: boolean })
       setStep("done");
       // The sale is final on Hedera. Updating the Arkiv index only affects search, so a
       // failure here must not read as a failed purchase.
-      void fetch(`/api/rooms/${room.id}/sync`, { method: "POST" }).catch(() => undefined);
+      if (!room.legacyRegistry) {
+        void fetch(`/api/rooms/${room.id}/sync`, { method: "POST" }).catch(() => undefined);
+      }
     } catch (err) {
       setError(explainBuyError(err));
       setStep("idle");

@@ -21,15 +21,24 @@ export const hederaTestnet = defineChain({
 export const REGISTRY_ABI = parseAbi([
   "function verifyRoom(uint256 listingId) view returns (uint8 state, bool valid, address holder, uint64 start, uint64 end, uint256 price, uint256 roomTag)",
   "function holderIdentity(uint256 listingId) view returns (uint256)",
-  "function getListing(uint256 listingId) view returns (address payout, uint64 start, uint64 end, uint8 status, uint256 price, uint256 roomTag)",
+  "function getListing(uint256 listingId) view returns (address payout, uint64 start, uint64 end, uint8 status, uint256 price, uint256 roomTag, int32 latitudeE6, int32 longitudeE6)",
   "function listingCount() view returns (uint256)",
   "function listingsOfRoom(uint256 roomTag) view returns (uint256[])",
   "function usdc() view returns (address)",
   "function tokenOf(uint256 listingId) view returns (address)",
   "function rootVersion() view returns (uint256)",
   "function approvedRoot() view returns (uint256, uint256)",
-  "function listingMessage(uint256 room, uint64 start, uint64 end, uint256 price, address payout) view returns (uint256)",
+  "function listingMessage(uint256 room, uint64 start, uint64 end, uint256 price, address payout, int32 latitudeE6, int32 longitudeE6) view returns (uint256)",
   "error NoSuchListing()",
+]);
+
+/** ABI of the previous deployment retained for its currently active room rights. */
+export const LEGACY_REGISTRY_ABI = parseAbi([
+  "function verifyRoom(uint256 listingId) view returns (uint8 state, bool valid, address holder, uint64 start, uint64 end, uint256 price, uint256 roomTag)",
+  "function holderIdentity(uint256 listingId) view returns (uint256)",
+  "function getListing(uint256 listingId) view returns (address payout, uint64 start, uint64 end, uint8 status, uint256 price, uint256 roomTag)",
+  "function listingCount() view returns (uint256)",
+  "function tokenOf(uint256 listingId) view returns (address)",
 ]);
 
 /**
@@ -45,6 +54,9 @@ export type RoomState = (typeof ROOM_STATE)[number];
 
 export interface RoomRecord {
   listingId: string;
+  listingNumber: string;
+  registryAddress: `0x${string}`;
+  legacyRegistry: boolean;
   state: RoomState;
   valid: boolean;
   /** The broker holding rights, or null when nobody does. */
@@ -62,6 +74,8 @@ export interface RoomRecord {
   token: `0x${string}`;
   /** The owner's wallet, which the sale pays. */
   payout: `0x${string}`;
+  latitude?: number;
+  longitude?: number;
   /** From the Arkiv index, when the room has been indexed. */
   city?: string;
   label?: string;
@@ -69,10 +83,18 @@ export interface RoomRecord {
   arkivKey?: string;
 }
 
-export function registryAddress(): `0x${string}` {
-  const value = process.env.RENTAL_REGISTRY_ADDRESS;
-  if (!value) throw new Error("RENTAL_REGISTRY_ADDRESS is not set");
+export function registryAddress(legacy = false): `0x${string}` {
+  const value = legacy
+    ? process.env.LEGACY_RENTAL_REGISTRY_ADDRESS
+    : process.env.RENTAL_REGISTRY_ADDRESS;
+  if (!value) throw new Error(legacy
+    ? "LEGACY_RENTAL_REGISTRY_ADDRESS is not set"
+    : "RENTAL_REGISTRY_ADDRESS is not set");
   return value as `0x${string}`;
+}
+
+export function legacyRegistryAddress(): `0x${string}` | null {
+  return process.env.LEGACY_RENTAL_REGISTRY_ADDRESS ? registryAddress(true) : null;
 }
 
 export function publicClient() {
@@ -85,21 +107,30 @@ const ZERO = "0x0000000000000000000000000000000000000000";
  * A listing's token and payout never change, so one read is enough for the life of the
  * process. Without this, every room on a page would pay extra RPC calls on each load.
  */
-const fixedFactsCache = new Map<string, { token: `0x${string}`; payout: `0x${string}` }>();
+const fixedFactsCache = new Map<string, {
+  token: `0x${string}`; payout: `0x${string}`; latitudeE6: number; longitudeE6: number;
+}>();
 
-async function readFixedFacts(registry: `0x${string}`, listingId: bigint) {
+async function readFixedFacts(registry: `0x${string}`, listingId: bigint, legacy = false) {
   const key = `${registry}:${listingId}`;
   const cached = fixedFactsCache.get(key);
   if (cached) return cached;
   const [token, listing] = await Promise.all([
     publicClient().readContract({
-      address: registry, abi: REGISTRY_ABI, functionName: "tokenOf", args: [listingId],
+      address: registry, abi: legacy ? LEGACY_REGISTRY_ABI : REGISTRY_ABI,
+      functionName: "tokenOf", args: [listingId],
     }),
     publicClient().readContract({
-      address: registry, abi: REGISTRY_ABI, functionName: "getListing", args: [listingId],
+      address: registry, abi: legacy ? LEGACY_REGISTRY_ABI : REGISTRY_ABI,
+      functionName: "getListing", args: [listingId],
     }),
   ]);
-  const facts = { token, payout: listing[0] };
+  const facts = {
+    token,
+    payout: listing[0],
+    latitudeE6: legacy ? 0 : Number(listing[6]),
+    longitudeE6: legacy ? 0 : Number(listing[7]),
+  };
   fixedFactsCache.set(key, facts);
   return facts;
 }
@@ -111,22 +142,26 @@ async function readFixedFacts(registry: `0x${string}`, listingId: bigint) {
  * Returns null for a listing that does not exist, rather than throwing — an unknown
  * room is a normal thing for a stranger to scan, not an error.
  */
-export async function readRoom(listingId: bigint): Promise<RoomRecord | null> {
-  const address = registryAddress();
+export async function readRoom(
+  listingId: bigint,
+  address = registryAddress(),
+  legacy = false,
+): Promise<RoomRecord | null> {
+  const abi = legacy ? LEGACY_REGISTRY_ABI : REGISTRY_ABI;
   try {
     // Both reads go out together: done in sequence this costs two round trips per
     // room, which multiplies across a page that lists several.
     const [room, identity, facts] = await Promise.all([
       publicClient().readContract({
-        address, abi: REGISTRY_ABI, functionName: "verifyRoom", args: [listingId],
+        address, abi, functionName: "verifyRoom", args: [listingId],
       }),
       publicClient()
         .readContract({
-          address, abi: REGISTRY_ABI, functionName: "holderIdentity", args: [listingId],
+          address, abi, functionName: "holderIdentity", args: [listingId],
         })
         // Optional: an unsold room has no identity bound.
         .catch(() => 0n),
-      readFixedFacts(address, listingId),
+      readFixedFacts(address, listingId, legacy),
     ]);
 
     const [state, valid, holder, start, end, price, roomTag] = room;
@@ -134,6 +169,9 @@ export async function readRoom(listingId: bigint): Promise<RoomRecord | null> {
 
     return {
       listingId: listingId.toString(),
+      listingNumber: listingId.toString(),
+      registryAddress: address,
+      legacyRegistry: legacy,
       state: ROOM_STATE[state] ?? "none",
       valid,
       holder: holder === ZERO ? null : holder,
@@ -145,6 +183,10 @@ export async function readRoom(listingId: bigint): Promise<RoomRecord | null> {
       roomTag: roomTag.toString(),
       token: facts.token,
       payout: facts.payout,
+      ...(legacy ? {} : {
+        latitude: facts.latitudeE6 / 1_000_000,
+        longitude: facts.longitudeE6 / 1_000_000,
+      }),
     };
   } catch {
     return null;
@@ -206,12 +248,12 @@ export async function readRootVersion(): Promise<string> {
 // Hashio is slow. Writes call invalidateRooms(), so a state change still appears at
 // once; this window only affects a listing someone else changed.
 const ROOMS_TTL_MS = 20_000;
-let roomsCache: { at: number; rooms: RoomRecord[] } | null = null;
-let roomsInFlight: Promise<RoomRecord[]> | null = null;
+const roomsCaches = new Map<string, { at: number; rooms: RoomRecord[] }>();
+const roomsInFlights = new Map<string, Promise<RoomRecord[]>>();
 
 /** Drops the cache, for use straight after a write. */
 export function invalidateRooms(): void {
-  roomsCache = null;
+  roomsCaches.clear();
   rootVersionCache = null;
 }
 
@@ -224,31 +266,55 @@ export function invalidateRooms(): void {
  * cache, so a change someone just made is never hidden by the stale copy.
  */
 export async function readAllRooms(): Promise<RoomRecord[]> {
-  if (roomsCache) {
-    if (Date.now() - roomsCache.at >= ROOMS_TTL_MS) void refreshRooms().catch(() => undefined);
-    return roomsCache.rooms;
-  }
-  return refreshRooms();
+  return readAllRoomsFrom(registryAddress());
 }
 
-function refreshRooms(): Promise<RoomRecord[]> {
-  if (roomsInFlight) return roomsInFlight;
-  roomsInFlight = readAllRoomsUncached()
+export async function readAllConfiguredRooms(): Promise<RoomRecord[]> {
+  const legacy = legacyRegistryAddress();
+  if (!legacy) return readAllRooms();
+  const [current, old] = await Promise.all([
+    readAllRoomsFrom(registryAddress()),
+    readAllRoomsFrom(legacy, true),
+  ]);
+  return [
+    ...current,
+    ...old.map((room) => ({ ...room, listingId: `legacy-${room.listingNumber}` })),
+  ];
+}
+
+function refreshRooms(address: `0x${string}`, legacy: boolean): Promise<RoomRecord[]> {
+  const key = address.toLowerCase();
+  const pending = roomsInFlights.get(key);
+  if (pending) return pending;
+  const request = readAllRoomsUncached(address, legacy)
     .then((rooms) => {
-      roomsCache = { at: Date.now(), rooms };
+      roomsCaches.set(key, { at: Date.now(), rooms });
       return rooms;
     })
     .finally(() => {
-      roomsInFlight = null;
+      roomsInFlights.delete(key);
     });
-  return roomsInFlight;
+  roomsInFlights.set(key, request);
+  return request;
 }
 
-async function readAllRoomsUncached(): Promise<RoomRecord[]> {
+async function readAllRoomsFrom(address: `0x${string}`, legacy = false): Promise<RoomRecord[]> {
+  const key = address.toLowerCase();
+  const cached = roomsCaches.get(key);
+  if (cached) {
+    if (Date.now() - cached.at >= ROOMS_TTL_MS) void refreshRooms(address, legacy).catch(() => undefined);
+    return cached.rooms;
+  }
+  return refreshRooms(address, legacy);
+}
+
+async function readAllRoomsUncached(address: `0x${string}`, legacy: boolean): Promise<RoomRecord[]> {
   const count = await publicClient().readContract({
-    address: registryAddress(), abi: REGISTRY_ABI, functionName: "listingCount",
+    address,
+    abi: legacy ? LEGACY_REGISTRY_ABI : REGISTRY_ABI,
+    functionName: "listingCount",
   });
   const ids = Array.from({ length: Number(count) }, (_, i) => BigInt(i + 1));
-  const rooms = await Promise.all(ids.map(readRoom));
+  const rooms = await Promise.all(ids.map((id) => readRoom(id, address, legacy)));
   return rooms.filter((r): r is RoomRecord => r !== null);
 }

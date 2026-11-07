@@ -361,6 +361,39 @@ export function VerifyClient({
         </div>
       </section>
 
+      {isLive && room.latitude !== undefined && room.longitude !== undefined && (
+        <section className="verify-result" aria-labelledby="property-location-title" style={{ marginTop: 18 }}>
+          <div className="verify-result__head">
+            <h2 id="property-location-title" className="subtitle">Property location · Hedera</h2>
+            <span className="badge badge--verified">Listing coordinates</span>
+          </div>
+          <div className="verify-result__body">
+            <p className="micro dim" style={{ marginBottom: 12 }}>
+              This map uses the coordinates permanently recorded with the listing. The pin was owner-supplied and reviewed with the deed; it is not an independent survey.
+            </p>
+            <iframe
+              title="On-chain property coordinates"
+              src={`https://www.openstreetmap.org/export/embed.html?bbox=${room.longitude - 0.008}%2C${room.latitude - 0.008}%2C${room.longitude + 0.008}%2C${room.latitude + 0.008}&layer=mapnik&marker=${room.latitude}%2C${room.longitude}`}
+              loading="lazy"
+              referrerPolicy="no-referrer"
+              style={{ width: "100%", height: 280, border: "1px solid var(--line)", borderRadius: 8 }}
+            />
+            <p className="mono micro" style={{ marginTop: 8 }}>
+              {room.latitude.toFixed(6)}, {room.longitude.toFixed(6)}
+            </p>
+          </div>
+        </section>
+      )}
+      {isLive && room.legacyRegistry && room.latitude === undefined && (
+        <div className="notice notice--brass" style={{ marginTop: 18 }}>
+          <span className="notice__icon" aria-hidden="true">i</span>
+          <div>
+            <strong>This legacy listing has no on-chain location coordinates.</strong>
+            <p>Verify the property in person and compare the room token and holder against the original registry record.</p>
+          </div>
+        </div>
+      )}
+
       {held && (
         <div className="verify-action">
           {mode === "live" ? (

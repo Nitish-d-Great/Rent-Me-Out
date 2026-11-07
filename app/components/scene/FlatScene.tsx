@@ -22,11 +22,14 @@ function CameraRig() {
 
   useFrame(() => {
     const baseZoom = Math.min(size.width / 13.6, size.height / 10.4);
+    // Leave breathing room around the flat and its animated tokens so the full
+    // illustration stays inside the hero's allocated frame on desktop and mobile.
+    const frameScale = size.width < 720 ? 0.72 : 0.88;
     const drift = sceneState.drift;
     camera.position.set(11 + drift * 0.55, 10.4, 11 - drift * 0.35);
     camera.lookAt(0, 0.35, 0);
     if (camera instanceof THREE.OrthographicCamera) {
-      camera.zoom = baseZoom * sceneState.zoom;
+      camera.zoom = baseZoom * sceneState.zoom * frameScale;
       camera.updateProjectionMatrix();
     }
   });

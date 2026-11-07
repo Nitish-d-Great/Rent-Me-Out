@@ -1,32 +1,34 @@
 # How we use Arkiv
 
-**Filters match what users do.** Each indexed field exists because a screen filters on it:
+Arkiv is part of the path a renter can see. The marketplace sends city, status and price
+filters to an Arkiv query, then uses Hedera to confirm the current holder and lifecycle
+before it offers a room. The free-text box narrows the returned cards in the browser; it
+is not an Arkiv filter.
 
-| What the user sees | Arkiv query | Code |
+| What the user does | Arkiv query | What changes on screen |
 |---|---|---|
-| City chips on the marketplace | `RoomListing` by `city` | [`marketplace/page.tsx`](../app/app/(marketing)/marketplace/page.tsx) |
-| Registrar's review queue | `PropertyApplication` by `registry` | [`applications.ts`](../app/lib/chain/applications.ts) |
-| An owner's "My properties" | `PropertyApplication` by `ownerTag` | [`use-owner.ts`](../app/lib/chain/use-owner.ts) |
-| A room's status in search | `RoomListing` by `status` | [`listings.ts`](../app/lib/arkiv/listings.ts) |
-| Purchase link on the verify page | `RightsRecord` by `registry` | [`listings.ts`](../app/lib/arkiv/listings.ts) |
+| Choose a city | `RoomListing.city = ...` | Only listings indexed for that city remain. |
+| Choose available or held | `RoomListing.status = available/sold` | Marketplace results match the indexed state; Hedera still confirms the current state. |
+| Choose a price band | `priceUsdc < 900 USDC` or `priceUsdc >= 900 USDC` | Results are filtered by the indexed price, in six-decimal USDC units. |
+| Open the registrar queue | `PropertyApplication` by registry and pending status | The registrar sees applications for this deployment that still need review. |
+| Open “My properties” | `PropertyApplication` by owner tag | The owner's browser finds applications linked to its commitment. |
+| Verify a room | `RightsRecord` by registry/listing | The public page can show the Arkiv record link beside the Hedera result. |
 
-**Who can edit.** The backend wallet owns every entity, because owners and brokers should not
-need tGLM to use the product. That also means users cannot edit their own records today. The
-values it writes for rooms are read from Hedera at write time
-([`sync.ts`](../app/lib/arkiv/sync.ts)), so anyone may trigger a sync but nobody can
-influence what it writes.
+The backend wallet owns the Arkiv entities and pays the tGLM fee. That is a product
+tradeoff: a broker or owner can use the app without first funding a Rabdi wallet, but
+cannot edit their entity directly. The room's `payout` field is the owner's wallet; it
+does not make that wallet the Arkiv entity owner. Every read also filters on the backend
+writer and the configured Hedera registry, so records from a different writer or an old
+deployment do not enter this app's results.
 
-**Expiry matches the product.** A room right ends on a date, so its listing and rights record
-expire on that date. The marketplace needs no cleanup job, and an old listing cannot linger.
-The exception is a rental longer than 180 days: its entities would expire early and need
-extending, which we have not built.
+An application expires 90 days after submission. A room listing and rights record
+expire at the end of their rental period, capped at 180 days because of Arkiv's current
+maximum lifetime. Longer rentals therefore need an extension flow, which we have not
+built. On a sale or freeze, the app patches the indexed status after Hedera changes. The
+network expiry handles cleanup for a normal-length rental; no scheduled database cleanup
+is needed.
 
-**What each feature changes for users:**
-
-- Queries: rooms can be found by city, which Hedera's contract state cannot do.
-- Expiry: ended rooms stop appearing in search on their own.
-- Owner filter: a third party writing under our schema name cannot inject fake rooms.
-- `patchEntity`: a sale or freeze changes a room's status in search.
-
-**Verified by:** `app/scripts/data-layer-e2e.mjs`, which runs the flow through the app's own
-routes against the live network. Its last full run passed all 23 checks.
+The implementation is in [`listings.ts`](../app/lib/arkiv/listings.ts),
+[`schemas.ts`](../app/lib/arkiv/schemas.ts) and the marketplace page. The data-layer
+script exercises application submission, approval, listing search, sale and status sync
+against configured networks. We have not rerun it as part of this change.

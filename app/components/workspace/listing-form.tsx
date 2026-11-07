@@ -42,6 +42,7 @@ export function ListingForm() {
   const [listingError, setListingError] = useState<string | null>(null);
   const [progress, setProgress] = useState<string | null>(null);
   const [published, setPublished] = useState<PublishedRoom[]>([]);
+  const [locationConsent, setLocationConsent] = useState(false);
 
   const rooms = Array.from({ length: application?.rooms ?? 0 }, (_, index) => ({
     id: `room-${index + 1}`,
@@ -57,6 +58,9 @@ export function ListingForm() {
     connected &&
     verified &&
     Boolean(application) &&
+    Number.isInteger(application?.latitudeE6) &&
+    Number.isInteger(application?.longitudeE6) &&
+    locationConsent &&
     chosen.length > 0 &&
     !invalidDates &&
     chosen.every((room) => Number(prices[room.id]) > 0);
@@ -102,6 +106,8 @@ export function ListingForm() {
           end: BigInt(Math.floor(new Date(end).getTime() / 1000)),
           price: BigInt(Math.round(Number(prices[room.id]) * 1e6)),
           payout: address as `0x${string}`,
+          latitudeE6: application!.latitudeE6!,
+          longitudeE6: application!.longitudeE6!,
         };
 
         setProgress(`Proving approval for ${room.name}…`);
@@ -117,6 +123,8 @@ export function ListingForm() {
             end: Number(terms.end),
             price: terms.price.toString(),
             payout: terms.payout,
+            latitudeE6: terms.latitudeE6,
+            longitudeE6: terms.longitudeE6,
             // Public on Arkiv. The city makes a room searchable; the locality stays private.
             city: application.city,
             label: `${room.name} · ${application.city}`,
@@ -408,6 +416,14 @@ export function ListingForm() {
               <span className="badge badge--quiet">One ATS token per room</span>
             </div>
             <div className="panel__body">
+              <label className="choice" style={{ marginBottom: 18 }}>
+                <input
+                  type="checkbox"
+                  checked={locationConsent}
+                  onChange={(event) => setLocationConsent(event.target.checked)}
+                />
+                I agree to publish the approved property coordinates on Hedera. They will be public and cannot be removed from the chain.
+              </label>
               {!connected ? (
                 <div className="notice notice--brass">
                   <span className="notice__icon" aria-hidden="true">
@@ -491,7 +507,11 @@ export function ListingForm() {
                           ? "Verify your identity to issue tokens."
                           : !application
                             ? "A registrar-approved property is required."
-                            : chosen.length === 0
+                            : !Number.isInteger(application.latitudeE6) || !Number.isInteger(application.longitudeE6)
+                              ? "This approval has no reviewed location. Submit a new application with a map pin."
+                              : !locationConsent
+                                ? "Confirm that you want the property coordinates published on-chain."
+                              : chosen.length === 0
                               ? "Select at least one room."
                               : "Complete the price and date fields."}
                     </p>

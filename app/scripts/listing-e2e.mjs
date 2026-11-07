@@ -32,10 +32,10 @@ const chain = defineChain({
 
 const ABI = parseAbi([
   "function approveProperty(bytes32 applicationId, uint256 commitment)",
-  "function createListing((uint256 merkleTreeDepth,uint256 merkleTreeRoot,uint256 nullifier,uint256 message,uint256 scope,uint256[8] points) proof, uint64 start, uint64 end, uint256 price, address payout) returns (uint256)",
+  "function createListing((uint256 merkleTreeDepth,uint256 merkleTreeRoot,uint256 nullifier,uint256 message,uint256 scope,uint256[8] points) proof, uint64 start, uint64 end, uint256 price, address payout, int32 latitudeE6, int32 longitudeE6) returns (uint256)",
   "function approvedRoot() view returns (uint256,uint256)",
   "function listingCount() view returns (uint256)",
-  "function listingMessage(uint256 room, uint64 start, uint64 end, uint256 price, address payout) view returns (uint256)",
+  "function listingMessage(uint256 room, uint64 start, uint64 end, uint256 price, address payout, int32 latitudeE6, int32 longitudeE6) view returns (uint256)",
 ]);
 const APPROVED_EV = parseAbiItem("event PropertyApproved(bytes32 indexed applicationId, uint256 indexed commitment, uint256 rootVersion, uint256 root)");
 const REVOKED_EV  = parseAbiItem("event PropertyRevoked(uint256 indexed commitment, uint256 rootVersion, uint256 root)");
@@ -68,6 +68,8 @@ const terms = {
   end: BigInt(now + 300 * 86_400),        // runs ~10 months
   price: 1_500_000_000n,                  // 1500 USDC (6dp)
   payout: account.address,
+  latitudeE6: 19_119_700,
+  longitudeE6: 72_846_400,
 };
 console.log("room tag        ", room.toString().slice(0, 24) + "…");
 console.log("period          ", new Date(Number(terms.start) * 1000).toISOString().slice(0, 10),
@@ -123,7 +125,7 @@ for (let attempt = 1; attempt <= 15; attempt++) {
 console.log("\n4. generating Semaphore proof …");
 const message = await pub.readContract({
   address: REGISTRY, abi: ABI, functionName: "listingMessage",
-  args: [terms.room, terms.start, terms.end, terms.price, terms.payout],
+  args: [terms.room, terms.start, terms.end, terms.price, terms.payout, terms.latitudeE6, terms.longitudeE6],
 });
 const proof = await generateProof(owner, group, message, terms.room);
 console.log("   nullifier (room tag on-chain):", proof.nullifier.toString().slice(0, 24) + "…");
@@ -139,7 +141,7 @@ const { request: listReq } = await pub.simulateContract({
     message: BigInt(proof.message),
     scope: BigInt(proof.scope),
     points: proof.points.map(BigInt),
-  }, terms.start, terms.end, terms.price, terms.payout],
+  }, terms.start, terms.end, terms.price, terms.payout, terms.latitudeE6, terms.longitudeE6],
   account, gas: GAS,
 });
 await settle(await wallet.writeContract(listReq), "createListing");

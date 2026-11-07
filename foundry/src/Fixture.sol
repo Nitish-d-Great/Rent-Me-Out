@@ -13,6 +13,8 @@ library Fixture {
         uint64 end;
         uint256 price;
         address payout;
+        int32 latitudeE6;
+        int32 longitudeE6;
     }
 
     Vm private constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
@@ -51,6 +53,8 @@ library Fixture {
         t.end = uint64(vm.parseJsonUint(j, string.concat(key, ".end")));
         t.price = vm.parseJsonUint(j, string.concat(key, ".priceUsdc6"));
         t.payout = vm.parseJsonAddress(j, string.concat(key, ".payout"));
+        t.latitudeE6 = int32(vm.parseJsonInt(j, string.concat(key, ".latitudeE6")));
+        t.longitudeE6 = int32(vm.parseJsonInt(j, string.concat(key, ".longitudeE6")));
     }
 
     function cycle2Commitment() internal view returns (uint256) {

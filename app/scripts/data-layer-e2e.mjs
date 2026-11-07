@@ -118,7 +118,7 @@ for (let attempt = 1; ; attempt += 1) {
   await new Promise((r) => setTimeout(r, 3000));
 }
 const REG_ABI = parseAbi([
-  "function listingMessage(uint256 room, uint64 start, uint64 end, uint256 price, address payout) view returns (uint256)",
+  "function listingMessage(uint256 room, uint64 start, uint64 end, uint256 price, address payout, int32 latitudeE6, int32 longitudeE6) view returns (uint256)",
   "function buyRoom(uint256 listingId)",
   "function holderOf(uint256 listingId) view returns (address)",
 ]);
@@ -132,10 +132,11 @@ const now = Math.floor(Date.now() / 1000);
 const terms = {
   room: BigInt(keccak256(encodePacked(["string"], [seed])).slice(0, 18)),
   start: BigInt(now - 60), end: BigInt(now + 3 * 86_400), price: 1_000_000n, payout: account.address,
+  latitudeE6: 19_119_700, longitudeE6: 72_846_400,
 };
 const message = await pub.readContract({
   address: REGISTRY, abi: REG_ABI, functionName: "listingMessage",
-  args: [terms.room, terms.start, terms.end, terms.price, terms.payout],
+  args: [terms.room, terms.start, terms.end, terms.price, terms.payout, terms.latitudeE6, terms.longitudeE6],
 });
 const proof = await generateProof(owner, group, message, terms.room);
 const listed = await api("/api/listings", {
@@ -147,6 +148,7 @@ const listed = await api("/api/listings", {
       points: proof.points.map(String),
     },
     start: Number(terms.start), end: Number(terms.end), price: terms.price.toString(), payout: terms.payout,
+    latitudeE6: terms.latitudeE6, longitudeE6: terms.longitudeE6,
     city: "Mumbai", label: "E2E room",
   }),
 });

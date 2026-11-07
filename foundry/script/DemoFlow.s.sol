@@ -45,7 +45,9 @@ contract DemoFlow is Script {
         usdc.approve(address(reg), t.price);
 
         // 4. owner lists the room with the ZK membership proof
-        uint256 id = reg.createListing(Fixture.proof(), t.start, t.end, t.price, t.payout);
+        uint256 id = reg.createListing(
+            Fixture.proof(), t.start, t.end, t.price, t.payout, t.latitudeE6, t.longitudeE6
+        );
 
         // 5. broker buys it: USDC out, room token in, one transaction
         reg.buyRoom(id);

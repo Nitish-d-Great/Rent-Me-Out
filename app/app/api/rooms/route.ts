@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { readRoomIndex } from "@/lib/arkiv/listings";
-import { readAllRooms, readRootVersion } from "@/lib/chain/registry";
+import { readAllConfiguredRooms, readRootVersion } from "@/lib/chain/registry";
 
 /**
  * Every room the registry knows about, read live from Hedera.
@@ -11,7 +11,7 @@ import { readAllRooms, readRootVersion } from "@/lib/chain/registry";
 export async function GET() {
   try {
     const [chainRooms, rootVersion, index] = await Promise.all([
-      readAllRooms(),
+      readAllConfiguredRooms(),
       readRootVersion(),
       // Rights come from Hedera, so an Arkiv outage only loses the city and record links.
       readRoomIndex().catch((error) => {
@@ -20,7 +20,7 @@ export async function GET() {
       }),
     ]);
     const rooms = chainRooms.map((room) => {
-      const entry = index?.get(room.listingId);
+      const entry = room.legacyRegistry ? undefined : index?.get(room.listingNumber);
       return {
         ...room,
         city: entry?.city,

@@ -13,10 +13,17 @@ export interface Room {
   tokenId: string;
   /** The room's ATS token. Only live listings have one; sample rooms do not. */
   tokenAddress?: string;
+  /** Registry that owns this listing, including retained legacy deployments. */
+  registryAddress?: string;
+  listingNumber?: string;
+  legacyRegistry?: boolean;
   /** The owner's wallet, on live listings. */
   payout?: string;
   /** Public city, from the room's Arkiv listing. */
   city?: string;
+  /** Owner-published map pin read from the Hedera registry. */
+  latitude?: number;
+  longitude?: number;
   /** The room's public record on Arkiv. */
   arkivKey?: string;
   name: string;

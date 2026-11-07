@@ -56,12 +56,24 @@ contract RentalRegistry is Roles {
         Status status;
         uint256 price; // one-time USDC price (6 decimals)
         uint256 roomTag; // private room tag = Semaphore nullifier
+        int32 latitudeE6; // signed decimal degrees, rounded to 6 decimal places
+        int32 longitudeE6;
+    }
+
+    struct ListingTerms {
+        uint64 start;
+        uint64 end;
+        uint256 price;
+        address payout;
+        int32 latitudeE6;
+        int32 longitudeE6;
     }
 
     // --------------------------------------------------------------- errors
     error InvalidPeriod();
     error InvalidPrice();
     error InvalidPayout();
+    error InvalidCoordinates();
     error TermsNotBoundToProof();
     error RoomAlreadyListed(uint256 conflictingListingId);
     error NoSuchListing();
@@ -193,15 +205,22 @@ contract RentalRegistry is Roles {
     }
 
     // --------------------------------------------------- owner: list a room
-    /// The message the owner's Semaphore proof must be bound to. Matches js/make-fixture.js.
-    /// `room` is the proof's scope (room index). Binding the terms stops anyone altering
-    /// price, dates or the payout address of a valid proof.
-    function listingMessage(uint256 room, uint64 start, uint64 end, uint256 price, address payout)
+    /// The message the owner's Semaphore proof must be bound to. `room` is the proof's
+    /// scope (room index). Location is included so a relayer cannot alter the map pin.
+    function listingMessage(
+        uint256 room,
+        uint64 start,
+        uint64 end,
+        uint256 price,
+        address payout,
+        int32 latitudeE6,
+        int32 longitudeE6
+    )
         public
         pure
         returns (uint256)
     {
-        return uint256(keccak256(abi.encodePacked(room, start, end, price, payout)));
+        return uint256(keccak256(abi.encodePacked(room, start, end, price, payout, latitudeE6, longitudeE6)));
     }
 
     /// List one room for one period. Requires a proof of membership in the approved set, which
@@ -212,12 +231,35 @@ contract RentalRegistry is Roles {
         uint64 start,
         uint64 end,
         uint256 price,
-        address payout
+        address payout,
+        int32 latitudeE6,
+        int32 longitudeE6
     ) external nonReentrant returns (uint256 listingId) {
-        if (end <= start || end <= block.timestamp) revert InvalidPeriod();
-        if (price == 0) revert InvalidPrice();
-        if (payout == address(0)) revert InvalidPayout();
-        if (proof.message != listingMessage(proof.scope, start, end, price, payout)) revert TermsNotBoundToProof();
+        ListingTerms memory terms = ListingTerms({
+            start: start,
+            end: end,
+            price: price,
+            payout: payout,
+            latitudeE6: latitudeE6,
+            longitudeE6: longitudeE6
+        });
+        return _createListing(proof, terms);
+    }
+
+    function _createListing(ISemaphore.SemaphoreProof calldata proof, ListingTerms memory terms)
+        private
+        returns (uint256 listingId)
+    {
+        if (terms.end <= terms.start || terms.end <= block.timestamp) revert InvalidPeriod();
+        if (terms.price == 0) revert InvalidPrice();
+        if (terms.payout == address(0)) revert InvalidPayout();
+        if (terms.latitudeE6 < -90_000_000 || terms.latitudeE6 > 90_000_000
+            || terms.longitudeE6 < -180_000_000 || terms.longitudeE6 > 180_000_000) revert InvalidCoordinates();
+        if (proof.message != listingMessage(
+            proof.scope, terms.start, terms.end, terms.price, terms.payout, terms.latitudeE6, terms.longitudeE6
+        )) {
+            revert TermsNotBoundToProof();
+        }
         // Reverts inside Semaphore for a bad proof, an unknown/expired root, or a nullifier
         // already spent in this group (Semaphore__YouAreUsingTheSameNullifierTwice) - that
         // last one is what makes an approval single-use and blocks proof replay.
@@ -230,12 +272,21 @@ contract RentalRegistry is Roles {
         for (uint256 i = 0; i < ids.length; i++) {
             Listing storage other = _listings[ids[i]];
             if (other.status != Status.Available && other.status != Status.Sold) continue;
-            if (start < other.end && other.start < end) revert RoomAlreadyListed(ids[i]);
+            if (terms.start < other.end && other.start < terms.end) revert RoomAlreadyListed(ids[i]);
         }
 
         listingId = ++listingCount;
         _listings[listingId] =
-            Listing({payout: payout, start: start, end: end, status: Status.Available, price: price, roomTag: tag});
+            Listing({
+                payout: terms.payout,
+                start: terms.start,
+                end: terms.end,
+                status: Status.Available,
+                price: terms.price,
+                roomTag: tag,
+                latitudeE6: terms.latitudeE6,
+                longitudeE6: terms.longitudeE6
+            });
         ids.push(listingId);
 
         IATSToken token = _issueRoomToken(listingId);
@@ -243,7 +294,9 @@ contract RentalRegistry is Roles {
         token.addToControlList(address(this)); // the ATS allowlist applies to mints too
         token.mint(address(this), 1);
         emit RoomTokenIssued(listingId, address(token));
-        emit ListingCreated(listingId, tag, payout, start, end, price, proof.merkleTreeRoot);
+        emit ListingCreated(
+            listingId, tag, terms.payout, terms.start, terms.end, terms.price, proof.merkleTreeRoot
+        );
     }
 
     /// Owner (payout wallet) or registrar cancels a listing that has not sold. Burns the token.

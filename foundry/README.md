@@ -75,7 +75,7 @@ period, with a different room tag.
 
 **Registrar:** `approveProperty(applicationId, commitment)`, `revokeProperty(commitment, siblings)`, `rejectProperty(applicationId, reasonHash)`, `freezeRoom` / `unfreezeRoom(id, reasonHash)`, `cancelListing(id)`; identity: `bindIdentity(identityKey, wallet)` (or `registerBroker(wallet, nullifier)`), `removeBroker(wallet)`, `bindSession(sessionKey, wallet)`.
 **Tenant page:** `sessionMatchesHolder(sessionKey, holder)` after reading `holderOf(id)` - see [Tenant verification](#tenant-verification).
-**Owner:** `createListing(proof, start, end, price, payout)`. The proof message must equal `listingMessage(room, start, end, price, payout)` and scope = room index, so terms and payout cannot be altered. The call spends the approval: listing the room again needs a new application.
+**Owner:** `createListing(proof, start, end, price, payout, latitudeE6, longitudeE6)`. Coordinates are signed decimal degrees at six decimal places. The proof message binds the period, price, payout, and coordinates, so a relayer cannot replace the reviewed pin. The call spends the approval: listing the room again needs a new application.
 **Broker:** `buyRoom(id)` after `approve(registry, price)` on USDC.
 **Anyone:** `expire(id)` / `expireMany(ids)` (keeper), and views `verifyRoom(id)`, `isValid(id)`, `roomState(id)`, `holderOf(id)`, `holderIdentity(id)`, `approvedRoot()`, `listingsOfRoom(tag)`.
 
@@ -98,14 +98,17 @@ and the dispute freeze; both exit non-zero on failure.
 
 | Contract | Address |
 |---|---|
-| `RentalRegistry` | [`0xb7Bd37F38129A93f49CEf030E63Cfb48D6F52e9E`](https://hashscan.io/testnet/contract/0xb7Bd37F38129A93f49CEf030E63Cfb48D6F52e9E) |
+| `RentalRegistry` | [`0xCB63F343D4b4151bfe75E8617144e72E99D7667B`](https://hashscan.io/testnet/contract/0xCB63F343D4b4151bfe75E8617144e72E99D7667B) |
 | `BrokerIdentityRegistry` | [`0x87081bAA3a6F0518f16d787e53754c5fD6a6Dac9`](https://hashscan.io/testnet/contract/0x87081bAA3a6F0518f16d787e53754c5fD6a6Dac9) |
 | `RoomRights` | [`0x929f2547c0aa473Dcd22f4a7897C20782c1A1BC2`](https://hashscan.io/testnet/contract/0x929f2547c0aa473Dcd22f4a7897C20782c1A1BC2) |
 | `DemoUSDC` | [`0xDf44cFf3dD65135b2d7Ec45b77BE85ae8dAa2876`](https://hashscan.io/testnet/contract/0xDf44cFf3dD65135b2d7Ec45b77BE85ae8dAa2876) |
 | `Semaphore` | [`0xA9bdBf426F52dC24ced44aEb36Bd8F6bd580C067`](https://hashscan.io/testnet/contract/0xA9bdBf426F52dC24ced44aEb36Bd8F6bd580C067) |
 
-Approved-property group `1`, root version 3 (the three demo properties). Listing 1 is sold and
-live: `isValid() == true`, 1200 dUSDC settled to the payout wallet.
+The location-aware registry starts with approved-property group `1` and no members; each
+property must be reviewed and approved again on this registry. The previous registry at
+`0xb7Bd37F38129A93f49CeF030E63Cfb48D6F52e9E` remains live for its two active listings. The
+app reads and supports purchases on those legacy listings while new approvals and listings
+use the location-aware registry.
 
 Caveats:
 - `RoomRights` is a self-contained stand-in for an ATS token (the ATS integration is unverified). `RentalRegistry` only needs mint/transfer/freeze/burn/ownerOf from it.
@@ -330,7 +333,7 @@ A permissioned, NFT-shaped token. Supply is 1 per room period, 0 decimals, and t
 The core. The constructor creates the Semaphore group (this contract is its admin) and deploys its own `RoomRights`.
 
 **Privacy model.** The registrar approves an opaque Semaphore identity commitment, never an address. An owner lists a room with a proof that "some approved property authorises these exact terms".
-- The proof's `message` must equal `listingMessage(room, start, end, price, payout)`. This stops anyone altering price, dates or payout on a valid proof.
+- The proof's `message` must equal `listingMessage(room, start, end, price, payout, latitudeE6, longitudeE6)`. This stops anyone altering price, dates, payout, or map pin on a valid proof.
 - The proof's nullifier (scope = room index) is the private room tag.
 - It calls `validateProof`, so the nullifier is spent in the Semaphore group. **One approval, one tokenisation:** an approved commitment can list a given room exactly once, ever. Once that listing is cancelled or expires, the token is burned and the approval is gone, so the owner must re-apply and have a fresh commitment approved to list the room again. Every cycle mints a brand-new token from scratch.
 - Because the tag derives from the identity secret, a re-application produces a different tag. Cycles of the same room are therefore unlinkable on-chain. The trade-off: the contract can no longer detect a double-booking made through two separate approvals of the same room, so the registrar must not approve a fresh application while that room's period is still live.

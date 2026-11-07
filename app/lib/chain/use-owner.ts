@@ -15,6 +15,8 @@ export interface OwnerApplication {
   nickname: string;
   locality: string;
   city: string;
+  latitudeE6?: number;
+  longitudeE6?: number;
   rooms: number;
   deedName: string;
 }

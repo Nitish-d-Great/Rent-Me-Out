@@ -1,6 +1,6 @@
 import "server-only";
 import { ExpirationTime } from "@arkiv-network/sdk";
-import { and, eq } from "@arkiv-network/sdk/query";
+import { and, eq, gte, lt } from "@arkiv-network/sdk/query";
 import { addr, u64 } from "@arkiv-network/sdk/schema";
 import { getAddress, type Hex } from "viem";
 import { registryAddress } from "@/lib/chain/registry";
@@ -71,12 +71,20 @@ export async function queryListings(filter?: {
   status?: string;
   payout?: string;
   listingId?: bigint;
+  minPriceUsdc?: bigint;
+  maxPriceUsdc?: bigint;
 }): Promise<IndexedListing[]> {
   const conditions: Condition[] = [eq("registry", registry())];
   if (filter?.city) conditions.push(eq("city", filter.city));
   if (filter?.status) conditions.push(eq("status", filter.status));
   if (filter?.payout) conditions.push(eq("payout", addr(getAddress(filter.payout))));
   if (filter?.listingId !== undefined) conditions.push(eq("listingId", u64(filter.listingId)));
+  if (filter?.minPriceUsdc !== undefined) {
+    conditions.push(gte("priceUsdc", u64(filter.minPriceUsdc)));
+  }
+  if (filter?.maxPriceUsdc !== undefined) {
+    conditions.push(lt("priceUsdc", u64(filter.maxPriceUsdc)));
+  }
 
   const { entities } = await arkivPublic()
     .select(COLUMNS)

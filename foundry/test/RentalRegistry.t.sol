@@ -32,13 +32,16 @@ contract RentalRegistryTest is Test {
     uint64 END;
     uint256 PRICE;
     address PAYOUT;
+    int32 LATITUDE_E6;
+    int32 LONGITUDE_E6;
     uint64 START2;
     uint64 END2;
     uint256 PRICE2;
 
     function setUp() public {
         Fixture.Terms memory t = Fixture.terms();
-        (START, END, PRICE, PAYOUT) = (t.start, t.end, t.price, t.payout);
+        (START, END, PRICE, PAYOUT, LATITUDE_E6, LONGITUDE_E6) =
+            (t.start, t.end, t.price, t.payout, t.latitudeE6, t.longitudeE6);
         Fixture.Terms memory t2 = Fixture.cycle2Terms();
         (START2, END2, PRICE2) = (t2.start, t2.end, t2.price);
 
@@ -72,14 +75,15 @@ contract RentalRegistryTest is Test {
     }
 
     function _list() internal returns (uint256) {
-        return reg.createListing(Fixture.proof(), START, END, PRICE, PAYOUT);
+        return reg.createListing(Fixture.proof(), START, END, PRICE, PAYOUT, LATITUDE_E6, LONGITUDE_E6);
     }
 
     /// Owner re-applies and the registrar approves a fresh commitment, then lists again.
     function _reapplyAndList() internal returns (uint256) {
         vm.prank(registrar);
         reg.approveProperty(bytes32(uint256(0xBEEF)), Fixture.cycle2Commitment());
-        return reg.createListing(Fixture.cycle2Proof(), START2, END2, PRICE2, PAYOUT);
+        Fixture.Terms memory t = Fixture.cycle2Terms();
+        return reg.createListing(Fixture.cycle2Proof(), START2, END2, PRICE2, PAYOUT, t.latitudeE6, t.longitudeE6);
     }
 
     // ------------------------------------------------------------ properties
@@ -117,21 +121,25 @@ contract RentalRegistryTest is Test {
         assertEq(l.price, PRICE);
         assertEq(l.payout, PAYOUT);
         assertEq(l.roomTag, Fixture.proof().nullifier);
+        assertEq(l.latitudeE6, LATITUDE_E6);
+        assertEq(l.longitudeE6, LONGITUDE_E6);
         assertEq(reg.holderOf(id), address(0));
     }
 
     function test_TamperedTermsRejected() public {
         vm.expectRevert(RentalRegistry.TermsNotBoundToProof.selector);
-        reg.createListing(Fixture.proof(), START, END, PRICE - 1, PAYOUT);
+        reg.createListing(Fixture.proof(), START, END, PRICE - 1, PAYOUT, LATITUDE_E6, LONGITUDE_E6);
         vm.expectRevert(RentalRegistry.TermsNotBoundToProof.selector);
-        reg.createListing(Fixture.proof(), START, END, PRICE, stranger); // redirect payout
+        reg.createListing(Fixture.proof(), START, END, PRICE, stranger, LATITUDE_E6, LONGITUDE_E6); // redirect payout
+        vm.expectRevert(RentalRegistry.TermsNotBoundToProof.selector);
+        reg.createListing(Fixture.proof(), START, END, PRICE, PAYOUT, LATITUDE_E6 + 1, LONGITUDE_E6);
     }
 
     function test_ForgedProofRejected() public {
         ISemaphore.SemaphoreProof memory p = Fixture.proof();
         p.points[0] += 1;
         vm.expectRevert(ISemaphore.Semaphore__InvalidProof.selector);
-        reg.createListing(p, START, END, PRICE, PAYOUT);
+        reg.createListing(p, START, END, PRICE, PAYOUT, LATITUDE_E6, LONGITUDE_E6);
     }
 
     function test_ApprovalIsSingleUse() public {
@@ -193,12 +201,13 @@ contract RentalRegistryTest is Test {
         reg.expire(1);
         // without the registrar approving the fresh commitment, the new proof has no valid root
         vm.expectRevert(ISemaphore.Semaphore__MerkleTreeRootIsNotPartOfTheGroup.selector);
-        reg.createListing(Fixture.cycle2Proof(), START2, END2, PRICE2, PAYOUT);
+        Fixture.Terms memory t = Fixture.cycle2Terms();
+        reg.createListing(Fixture.cycle2Proof(), START2, END2, PRICE2, PAYOUT, t.latitudeE6, t.longitudeE6);
     }
 
     function test_InvalidPeriodRejected() public {
         vm.expectRevert(RentalRegistry.InvalidPeriod.selector);
-        reg.createListing(Fixture.proof(), END, START, PRICE, PAYOUT);
+        reg.createListing(Fixture.proof(), END, START, PRICE, PAYOUT, LATITUDE_E6, LONGITUDE_E6);
     }
 
     // ------------------------------------------------------------- purchase

@@ -4,13 +4,14 @@
   "SemaphoreVerifier": "0xf79A9b157b8DbafEf8720A1280d1d28291Df0cC9",
   "chainId": 296,
   "BrokerIdentityRegistry": "0x87081bAA3a6F0518f16d787e53754c5fD6a6Dac9",
-  "RentalRegistry": "0xb7Bd37F38129A93f49CEf030E63Cfb48D6F52e9E",
+  "RentalRegistry": "0xCB63F343D4b4151bfe75E8617144e72E99D7667B",
   "AtsFactory": "0xd1F118A40f3b02883D35909eF2517e7EDd78379d",
   "AtsResolver": "0xBA2D5FC2083A0b8f164c50e65d782087fBA18E0a",
   "USDC": "0xDf44cFf3dD65135b2d7Ec45b77BE85ae8dAa2876",
-  "approvedGroupId": 0,
+  "approvedGroupId": 1,
   "owner": "0xE47DBA74b5F91f216D9456d1d6698b6907c391dF",
   "registrars": [
     "0xE47DBA74b5F91f216D9456d1d6698b6907c391dF"
-  ]
+  ],
+  "LegacyRentalRegistry": "0xb7Bd37F38129A93f49CeF030E63Cfb48D6F52e9E"
 }
