@@ -167,7 +167,7 @@ export default async function RoomDetailPage({ params }: PageProps) {
                       <span>
                         {room.state === "held"
                           ? `Holder ${room.holder ? shortAddress(room.holder) : "unknown"}`
-                          : "Buying is restricted to wallets on the ATS verified list"}
+                          : "Buying is restricted to wallets verified with World ID"}
                       </span>
                     </div>
                   </div>

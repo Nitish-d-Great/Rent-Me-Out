@@ -28,7 +28,7 @@ function sampleDeed(): Blob {
 
 export function PropertyForm() {
   const { connected, connect, address } = useWallet();
-  const { verified, confirm: setVerified } = useWalletVerified(address);
+  const { verified, identityShort, confirm: setVerified } = useWalletVerified(address);
   const [submit, setSubmit] = useState<SubmitState>("idle");
   const [error, setError] = useState<string | null>(null);
   const [reference, setReference] = useState<string | null>(null);
@@ -210,7 +210,7 @@ export function PropertyForm() {
         <div className="panel__head">
           <h2>Step 1 · Identity and wallet</h2>
           {verified ? (
-            <VerifyBadge label="Owner verified" />
+            <VerifyBadge label="Owner verified" hash={identityShort} />
           ) : (
             <span className="badge badge--brass">Required</span>
           )}

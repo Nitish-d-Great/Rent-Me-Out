@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { isAddress } from "viem";
-import { brokerAllowlist } from "@/lib/world";
+import { BROKER_IDENTITY_ABI, brokerIdentityAddress, publicClient } from "@/lib/world/chain";
 
 /**
  * Whether a wallet is already enrolled, read from the identity registry.
@@ -14,8 +14,17 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: "invalid_wallet" }, { status: 400 });
   }
   try {
-    const verified = await brokerAllowlist.isAllowed(wallet);
-    return NextResponse.json({ verified }, { headers: { "Cache-Control": "no-store" } });
+    // The registry's identity is a hash of the action and nullifier, so it is safe to show.
+    const identity = await publicClient().readContract({
+      address: brokerIdentityAddress(),
+      abi: BROKER_IDENTITY_ABI,
+      functionName: "identityOf",
+      args: [wallet],
+    });
+    return NextResponse.json(
+      { verified: identity !== 0n, identity: identity === 0n ? null : `0x${identity.toString(16)}` },
+      { headers: { "Cache-Control": "no-store" } },
+    );
   } catch (error) {
     console.error("[world/status] read failed:", error);
     return NextResponse.json({ error: "registry_unavailable" }, { status: 502 });

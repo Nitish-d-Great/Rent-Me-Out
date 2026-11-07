@@ -27,7 +27,7 @@ const isoDate = (ms: number) => new Date(ms).toISOString().slice(0, 10);
 
 export function ListingForm() {
   const { connected, connect, address } = useWallet();
-  const { verified, confirm: setVerified } = useWalletVerified(address);
+  const { verified, identityShort, confirm: setVerified } = useWalletVerified(address);
   const { applications, state: applicationsState, hasIdentity } = useOwnerApplications();
   const approved = applications.filter((app) => app.status === "approved");
   const [applicationId, setApplicationId] = useState<string | null>(null);
@@ -531,7 +531,7 @@ export function ListingForm() {
               </div>
             </div>
 
-            {verified && <VerifyBadge label="Owner verified" />}
+            {verified && <VerifyBadge label="Owner verified" hash={identityShort} />}
 
             <p className="buy-panel__note">
               The broker pays this amount once for the full period. Tenant rent

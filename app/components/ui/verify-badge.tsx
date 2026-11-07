@@ -1,8 +1,6 @@
-import { demo } from "@/lib/data";
-
 export function VerifyBadge({
   label = "Verified broker",
-  hash = demo.nullifierShort,
+  hash,
 }: {
   label?: string;
   hash?: string;
@@ -13,7 +11,7 @@ export function VerifyBadge({
         ✓
       </span>
       {label}
-      <span className="mono dim">{hash}</span>
+      {hash && <span className="mono dim">{hash}</span>}
     </span>
   );
 }

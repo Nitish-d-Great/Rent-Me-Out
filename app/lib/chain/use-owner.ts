@@ -66,9 +66,12 @@ export function useOwnerApplications(): {
 export function useWalletVerified(address: string | null): {
   verified: boolean;
   checking: boolean;
+  /** Short form of this wallet's on-chain identity hash, once known. */
+  identityShort?: string;
   confirm: () => void;
 } {
   const [known, setKnown] = useState<Record<string, boolean>>({});
+  const [identities, setIdentities] = useState<Record<string, string>>({});
 
   useEffect(() => {
     if (!address) return;
@@ -76,8 +79,13 @@ export function useWalletVerified(address: string | null): {
     void (async () => {
       try {
         const res = await fetch(`/api/world/status?wallet=${address}`);
-        const data = (await res.json()) as { verified?: boolean };
-        if (!cancelled) setKnown((prev) => ({ ...prev, [address]: Boolean(data.verified) }));
+        const data = (await res.json()) as { verified?: boolean; identity?: string | null };
+        if (cancelled) return;
+        setKnown((prev) => ({ ...prev, [address]: Boolean(data.verified) }));
+        const { identity } = data;
+        if (identity) {
+          setIdentities((prev) => ({ ...prev, [address]: `${identity.slice(0, 10)}…${identity.slice(-4)}` }));
+        }
       } catch {
         // Unknown stays unverified: the on-chain check still decides at purchase.
         if (!cancelled) setKnown((prev) => ({ ...prev, [address]: false }));
@@ -87,12 +95,24 @@ export function useWalletVerified(address: string | null): {
   }, [address]);
 
   const confirm = useCallback(() => {
-    if (address) setKnown((prev) => ({ ...prev, [address]: true }));
+    if (!address) return;
+    setKnown((prev) => ({ ...prev, [address]: true }));
+    // A verification just succeeded, so read back the identity it created.
+    void fetch(`/api/world/status?wallet=${address}`)
+      .then((res) => res.json())
+      .then((data: { identity?: string | null }) => {
+        const { identity } = data;
+        if (identity) {
+          setIdentities((prev) => ({ ...prev, [address]: `${identity.slice(0, 10)}…${identity.slice(-4)}` }));
+        }
+      })
+      .catch(() => undefined);
   }, [address]);
 
   return {
     verified: address ? Boolean(known[address]) : false,
     checking: Boolean(address) && known[address!] === undefined,
+    identityShort: address ? identities[address] : undefined,
     confirm,
   };
 }

@@ -7,7 +7,7 @@ import { WorldIdButton } from "@/components/ui/world-id-button";
 
 export function BrokerVerification() {
   const { connected, connect, address, rotate, isInjected } = useWallet();
-  const { verified, confirm: setVerified } = useWalletVerified(address);
+  const { verified, identityShort, confirm: setVerified } = useWalletVerified(address);
 
   if (verified) {
     return (
@@ -18,11 +18,11 @@ export function BrokerVerification() {
         <div>
           <strong>Verified broker.</strong>
           <p>
-            Your wallet is on the ATS verified list and can receive room tokens.
+            Your wallet is verified with World ID and can buy room tokens.
             One World ID identity is bound to this wallet only.
           </p>
           <div style={{ marginTop: 10 }}>
-            <VerifyBadge label="Verified broker" />
+            <VerifyBadge label="Verified broker" hash={identityShort} />
           </div>
         </div>
       </div>
@@ -38,7 +38,7 @@ export function BrokerVerification() {
         <strong>Buying stays locked until World ID is validated.</strong>
         <p>
           The backend checks the proof, rejects a second wallet for the same
-          person, and adds this wallet to the ATS verified list.
+          person, and records this wallet as verified on-chain.
         </p>
         <div className="flex wrap gap-8" style={{ marginTop: 12 }}>
           {!connected ? (

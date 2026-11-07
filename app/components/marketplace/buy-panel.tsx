@@ -14,7 +14,7 @@ type Step = "idle" | "processing" | "done";
 
 export function BuyPanel({ room, live = false }: { room: Room; live?: boolean }) {
   const { connected, connect, address } = useWallet();
-  const { verified, confirm: setVerified } = useWalletVerified(address);
+  const { verified, identityShort, confirm: setVerified } = useWalletVerified(address);
   const [step, setStep] = useState<Step>("idle");
   const [error, setError] = useState<string | null>(null);
   const [stage, setStage] = useState<BuyStage | null>(null);
@@ -215,7 +215,7 @@ export function BuyPanel({ room, live = false }: { room: Room; live?: boolean })
               <>
                 <p className="buy-panel__note">
                   Buying is locked until World ID is validated by the backend
-                  and your wallet is on the ATS verified list.
+                  and your wallet is verified on-chain.
                 </p>
                 <WorldIdButton
                   action="broker-verify"
@@ -234,7 +234,7 @@ export function BuyPanel({ room, live = false }: { room: Room; live?: boolean })
 
             {connected && verified && live && (
               <>
-                <VerifyBadge label="Verified broker" />
+                <VerifyBadge label="Verified broker" hash={identityShort} />
                 <button
                   type="button"
                   className="btn btn--brass btn--wide"

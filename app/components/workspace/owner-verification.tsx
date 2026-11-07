@@ -7,7 +7,7 @@ import { WorldIdButton } from "@/components/ui/world-id-button";
 
 export function OwnerVerification() {
   const { connected, connect, address } = useWallet();
-  const { verified, confirm: setVerified } = useWalletVerified(address);
+  const { verified, identityShort, confirm: setVerified } = useWalletVerified(address);
 
   if (verified) {
     return (
@@ -18,11 +18,11 @@ export function OwnerVerification() {
         <div>
           <strong>Owner verified.</strong>
           <p>
-            Your wallet is on the ATS allowlist. Submit a property and the
+            Your wallet is verified with World ID. Submit a property and the
             registrar will review the deed. Listing stays locked until approval.
           </p>
           <div style={{ marginTop: 10 }}>
-            <VerifyBadge label="Owner verified" />
+            <VerifyBadge label="Owner verified" hash={identityShort} />
           </div>
         </div>
       </div>
