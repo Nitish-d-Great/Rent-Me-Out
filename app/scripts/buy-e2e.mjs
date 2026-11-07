@@ -35,7 +35,7 @@ const USDC_ABI = parseAbi([
 ]);
 const REG_ABI = parseAbi([
   "function buyRoom(uint256)",
-  "function getListing(uint256) view returns (address,uint64,uint64,uint8,uint256,uint256)",
+  "function getListing(uint256) view returns (address,uint64,uint64,uint8,uint256,uint256,int32,int32)",
   "function holderOf(uint256) view returns (address)",
   "error BrokerNotVerified()", "error NotAvailable()", "error PaymentFailed()",
 ]);

@@ -13,6 +13,9 @@ import { recordToRoom, shortAddress } from "./to-room";
 
 interface ApiRoom {
   listingId: string;
+  listingNumber: string;
+  registryAddress: `0x${string}`;
+  legacyRegistry: boolean;
   state: string;
   valid: boolean;
   holder: string | null;

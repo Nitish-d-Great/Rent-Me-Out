@@ -49,7 +49,9 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   let body: {
     action?: string; applicationId?: string; commitment?: string; reason?: string;
+    locationReviewConfirmed?: boolean;
     nickname?: string; locality?: string; city?: string; rooms?: number;
+    latitudeE6?: number; longitudeE6?: number;
     deedName?: string; deedBase64?: string;
   };
   try {
@@ -63,6 +65,13 @@ export async function POST(request: Request) {
     const applicationId = body.applicationId?.trim();
     if (!applicationId || !commitment || !/^\d+$/.test(commitment)) {
       return NextResponse.json({ error: "invalid_application" }, { status: 400 });
+    }
+    if (
+      !Number.isInteger(body.latitudeE6) || !Number.isInteger(body.longitudeE6) ||
+      body.latitudeE6! < -90_000_000 || body.latitudeE6! > 90_000_000 ||
+      body.longitudeE6! < -180_000_000 || body.longitudeE6! > 180_000_000
+    ) {
+      return NextResponse.json({ error: "invalid_coordinates" }, { status: 400 });
     }
     const deed = Buffer.from(body.deedBase64 ?? "", "base64");
     if (deed.length === 0) {
@@ -78,6 +87,8 @@ export async function POST(request: Request) {
         nickname: body.nickname?.trim() || "Untitled property",
         locality: body.locality?.trim() ?? "",
         city: body.city?.trim() ?? "",
+        latitudeE6: body.latitudeE6!,
+        longitudeE6: body.longitudeE6!,
         rooms: Math.max(1, Math.min(20, Math.floor(Number(body.rooms ?? 1)))),
         deedName: body.deedName?.trim() || "deed.pdf",
         deed,
@@ -122,6 +133,12 @@ export async function POST(request: Request) {
     }
 
     const stored = await getApplication(applicationId);
+    if (!Number.isInteger(stored?.latitudeE6) || !Number.isInteger(stored?.longitudeE6)) {
+      return NextResponse.json({ error: "location_required" }, { status: 400 });
+    }
+    if (body.locationReviewConfirmed !== true) {
+      return NextResponse.json({ error: "location_review_required" }, { status: 400 });
+    }
     const commitment = (body.commitment ?? stored?.commitment ?? "").trim();
     if (!commitment || !/^\d+$/.test(commitment)) {
       // Without the owner's commitment there is nothing to admit to the group.

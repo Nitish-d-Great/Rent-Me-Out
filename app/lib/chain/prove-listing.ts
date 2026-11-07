@@ -23,6 +23,9 @@ export interface ListingTerms {
   /** USDC with 6 decimals. */
   price: bigint;
   payout: `0x${string}`;
+  /** Signed decimal degrees multiplied by 1,000,000. */
+  latitudeE6: number;
+  longitudeE6: number;
 }
 
 export interface ListingProof {
@@ -51,8 +54,8 @@ function listingMessage(terms: ListingTerms): bigint {
   return BigInt(
     keccak256(
       encodePacked(
-        ["uint256", "uint64", "uint64", "uint256", "address"],
-        [terms.room, terms.start, terms.end, terms.price, terms.payout],
+        ["uint256", "uint64", "uint64", "uint256", "address", "int32", "int32"],
+        [terms.room, terms.start, terms.end, terms.price, terms.payout, terms.latitudeE6, terms.longitudeE6],
       ),
     ),
   );

@@ -3,7 +3,7 @@ import { MarketplaceClient } from "@/components/marketplace/marketplace-client";
 import { demo, formatDate, marketplaceRooms, property } from "@/lib/data";
 import Link from "next/link";
 import { queryListings, readRoomIndex } from "@/lib/arkiv/listings";
-import { readAllRooms, type RoomRecord } from "@/lib/chain/registry";
+import { readAllConfiguredRooms, registryAddress, type RoomRecord } from "@/lib/chain/registry";
 import { recordToRoom } from "@/lib/chain/to-room";
 import type { RoomCardData } from "@/components/marketplace/room-card";
 
@@ -19,6 +19,9 @@ async function recordsFromArkiv(): Promise<RoomRecord[]> {
     .sort((a, b) => Number(a.listingId) - Number(b.listingId))
     .map((listing) => ({
       listingId: listing.listingId,
+      listingNumber: listing.listingId,
+      registryAddress: registryAddress(),
+      legacyRegistry: false,
       state: states[listing.status] ?? "available",
       valid: false,
       holder: null,
@@ -38,7 +41,7 @@ async function recordsFromArkiv(): Promise<RoomRecord[]> {
  * back to the sample set only when the registry is unreachable or empty, and says so,
  * so a sample room is never mistaken for one that can be bought.
  */
-async function loadListings(city?: string): Promise<{
+async function loadListings(city?: string, availability?: string, priceBand?: string): Promise<{
   rooms: RoomCardData[];
   live: boolean;
   cities: string[];
@@ -50,7 +53,15 @@ async function loadListings(city?: string): Promise<{
   try {
     index = await readRoomIndex();
     // The city filter is an Arkiv query, not a filter over rooms already in memory.
-    if (city) matching = new Set((await queryListings({ city })).map((l) => l.listingId));
+    const arkivFilter = {
+      city,
+      status: availability === "available" ? "available" : availability === "held" ? "sold" : undefined,
+      minPriceUsdc: priceBand === "900plus" ? 900_000_000n : undefined,
+      maxPriceUsdc: priceBand === "under900" ? 900_000_000n : undefined,
+    };
+    if (city || arkivFilter.status || arkivFilter.minPriceUsdc || arkivFilter.maxPriceUsdc) {
+      matching = new Set((await queryListings(arkivFilter)).map((l) => l.listingId));
+    }
   } catch (error) {
     console.error("[marketplace] Arkiv index unavailable:", error);
   }
@@ -59,12 +70,12 @@ async function loadListings(city?: string): Promise<{
     // A cold read from Hedera can take most of a minute, so don't hold the page for it.
     // It keeps running and fills the cache for the next visitor.
     const fromChain = await Promise.race([
-      readAllRooms(),
+      readAllConfiguredRooms(),
       new Promise<null>((resolve) => setTimeout(() => resolve(null), CHAIN_WAIT_MS)),
     ]);
     let records = fromChain ?? (await recordsFromArkiv());
     // Nothing on Arkiv either, so the chain's answer is the only one there is.
-    if (fromChain === null && records.length === 0) records = await readAllRooms();
+    if (fromChain === null && records.length === 0) records = await readAllConfiguredRooms();
     if (records.length) {
       const cities = [
         ...new Set([...(index?.values() ?? [])].map((e) => e.city).filter((c): c is string => Boolean(c))),
@@ -73,7 +84,7 @@ async function loadListings(city?: string): Promise<{
         rooms: records
           .filter((record) => !matching || matching.has(record.listingId))
           .map((record, index_) => {
-            const entry = index?.get(record.listingId);
+            const entry = record.legacyRegistry ? undefined : index?.get(record.listingNumber);
             return {
               ...recordToRoom({ ...record, city: entry?.city, arkivKey: entry?.listingKey }, index_),
               propertyId: property.id,
@@ -111,10 +122,24 @@ export const metadata: Metadata = {
 export default async function MarketplacePage({
   searchParams,
 }: {
-  searchParams: Promise<{ city?: string }>;
+  searchParams: Promise<{ city?: string; availability?: string; price?: string }>;
 }) {
-  const { city } = await searchParams;
-  const { rooms, live, cities, indexed, fromIndex } = await loadListings(city);
+  const { city, availability, price } = await searchParams;
+  const selectedAvailability = availability === "available" || availability === "held" ? availability : "all";
+  const selectedPrice = price === "under900" || price === "900plus" ? price : "any";
+  const { rooms, live, cities, indexed, fromIndex } = await loadListings(
+    city,
+    selectedAvailability,
+    selectedPrice,
+  );
+  const cityHref = (nextCity?: string) => {
+    const params = new URLSearchParams();
+    if (nextCity) params.set("city", nextCity);
+    if (selectedAvailability !== "all") params.set("availability", selectedAvailability);
+    if (selectedPrice !== "any") params.set("price", selectedPrice);
+    const query = params.toString();
+    return query ? `/marketplace?${query}` : "/marketplace";
+  };
 
   return (
     <div className="shell section section--tight">
@@ -141,13 +166,13 @@ export default async function MarketplacePage({
 
       {cities.length > 0 && (
         <div className="flex wrap gap-8" style={{ marginBottom: 16 }}>
-          <Link href="/marketplace" className="demo-chip" data-active={!city}>
+          <Link href={cityHref()} className="demo-chip" data-active={!city}>
             All cities
           </Link>
           {cities.map((name) => (
             <Link
               key={name}
-              href={`/marketplace?city=${encodeURIComponent(name)}`}
+              href={cityHref(name)}
               className="demo-chip"
               data-active={city === name}
             >
@@ -157,7 +182,12 @@ export default async function MarketplacePage({
         </div>
       )}
 
-      <MarketplaceClient rooms={rooms} />
+      <MarketplaceClient
+        rooms={rooms}
+        city={city}
+        availability={selectedAvailability}
+        price={selectedPrice}
+      />
 
       {live && !indexed && (
         <p className="micro" style={{ color: "crimson", marginTop: 12 }}>
@@ -174,8 +204,9 @@ export default async function MarketplacePage({
       )}
 
       <p className="verify-footnote" style={{ maxWidth: 720 }}>
-        A listing only appears after the property is approved on Hedera and the
-        room token exists. Arkiv supplies discovery; Hedera confirms the current
+        City, price and availability filters query Arkiv&apos;s indexed listing
+        records. A listing only appears after the property is approved on Hedera
+        and the room token exists. Arkiv supplies discovery; Hedera confirms the current
         holder and lifecycle. Tenant rent and lease terms are agreed with the
         broker outside this product.
       </p>

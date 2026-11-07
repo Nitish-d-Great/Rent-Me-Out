@@ -1,15 +1,20 @@
 # Reach
 
-> **TODO for the team:** only you can answer most of this honestly. The hackathon rubric rewards
-> real numbers, so replace each TODO with something true rather than a claim.
+The people we built this for are tenants asked to pay an advance, brokers who rent rooms,
+and owners who want a record of who has the right to rent each room. The first version is
+deliberately narrow: one verified broker can hold the right to rent one room for one
+period, and a tenant can check that right without signing in.
 
-**Who it is for.** Brokers who rent out rooms, owners who want to know who holds those rights,
-and tenants checking a broker before paying an advance.
+We have a working testnet demo, but there is no public demo URL in the project yet. To try
+it locally, follow the setup in the main README and fill in the variables in
+[`app/.env.example`](../app/.env.example). It uses Hedera testnet and Arkiv Rabdi; the
+sample rooms are clearly marked and cannot be purchased.
 
-**Would they use it?** TODO: evidence, such as how many renters or brokers you spoke to and
-what they said. Your notes suggest watching 5 to 10 people use the verify page.
+We have not kept a count of renter or broker interviews, so we cannot claim adoption or
+report a conversion rate. The next useful check is to put the public verify page in front
+of renters and see whether they can answer two questions quickly: who holds this room
+right, and when does it end?
 
-**Can they try it today?** TODO: the live demo link. Note that the deployed site needs the
-environment variables in `app/.env.example`.
-
-**Will you keep building it after Mumbai?** TODO: your decision.
+We plan to keep working on it after Mumbai. The next priorities are testing that verify
+flow with renters, making long rental periods fit Arkiv's current lifetime limit, and
+letting users own their Arkiv records without needing testnet tokens.

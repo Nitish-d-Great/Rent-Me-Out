@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ApprovalBadge, StatusStamp } from "@/components/ui/status-stamp";
 import { formatDate, type RoomState } from "@/lib/data";
 import { useLiveRooms } from "@/lib/chain/use-live-rooms";
@@ -57,9 +57,11 @@ export function RegistrarConsole() {
 
   const [apps, setApps] = useState<OwnerApplication[]>([]);
   const [appsState, setAppsState] = useState<"loading" | "ready" | "locked" | "unavailable">("loading");
+  const appsRequestInFlight = useRef(false);
   const [token, setToken] = useState("");
   const [tokenDraft, setTokenDraft] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [locationConfirmedId, setLocationConfirmedId] = useState<string | null>(null);
   const [rejection, setRejection] = useState("");
   const [processing, setProcessing] = useState<"approve" | "reject" | null>(
     null,
@@ -72,9 +74,12 @@ export function RegistrarConsole() {
   const audit = [...sessionAudit, ...decisionsToAudit(apps)];
 
   const selected = apps.find((app) => app.applicationId === selectedId) ?? apps[0];
+  const locationConfirmed = selected?.applicationId === locationConfirmedId;
 
   /** The review queue: status from Arkiv, details decrypted from Swarm by the server. */
   const loadApplications = useCallback(async (accessToken: string) => {
+    if (appsRequestInFlight.current) return;
+    appsRequestInFlight.current = true;
     try {
       const res = await fetch("/api/properties", { headers: registrarHeaders(accessToken) });
       if (res.status === 401) {
@@ -87,6 +92,8 @@ export function RegistrarConsole() {
       setAppsState("ready");
     } catch {
       setAppsState("unavailable");
+    } finally {
+      appsRequestInFlight.current = false;
     }
   }, []);
 
@@ -97,6 +104,17 @@ export function RegistrarConsole() {
       await loadApplications(stored);
     })();
   }, [loadApplications]);
+
+  // Keep an already-open registrar console in sync when an owner submits elsewhere.
+  // Arkiv indexing is asynchronous, so poll gently and also offer an immediate refresh.
+  useEffect(() => {
+    if (appsState === "locked") return;
+    const refresh = () => {
+      if (document.visibilityState === "visible") void loadApplications(token);
+    };
+    const interval = window.setInterval(refresh, 15_000);
+    return () => window.clearInterval(interval);
+  }, [appsState, loadApplications, token]);
 
   const unlock = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -146,6 +164,7 @@ export function RegistrarConsole() {
    */
   const decide = async (decision: "approved" | "rejected") => {
     if (!selected || selected.status !== "pending") return;
+    if (decision === "approved" && (!locationConfirmed || selected.latitudeE6 === undefined || selected.longitudeE6 === undefined)) return;
     if (decision === "rejected" && !rejection.trim()) return;
 
     setProcessing(decision === "approved" ? "approve" : "reject");
@@ -158,6 +177,7 @@ export function RegistrarConsole() {
         body: JSON.stringify({
           action: decision === "approved" ? "approve" : "reject",
           applicationId: selected.applicationId,
+          locationReviewConfirmed: decision === "approved" ? locationConfirmed : undefined,
           reason: decision === "rejected" ? rejection.trim() : undefined,
         }),
       });
@@ -349,7 +369,17 @@ export function RegistrarConsole() {
         <aside className="panel">
           <div className="panel__head">
             <h2>Review queue</h2>
-            <span className="badge badge--brass">{pending} pending</span>
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <span className="badge badge--brass">{pending} pending</span>
+              <button
+                type="button"
+                className="btn btn--small"
+                onClick={() => void loadApplications(token)}
+                aria-label="Refresh property applications"
+              >
+                Refresh
+              </button>
+            </div>
           </div>
           <div className="queue-list">
             {appsState === "loading" && (
@@ -446,6 +476,25 @@ export function RegistrarConsole() {
 
             <div className="deed-side">
               <p className="eyebrow">Property</p>
+              <p className="small dim" style={{ marginTop: 8, marginBottom: 10 }}>
+                Owner-selected pin · verify it against the deed before approving.
+              </p>
+              {selected.latitudeE6 !== undefined && selected.longitudeE6 !== undefined ? (
+                <>
+                  <iframe
+                    title={`Application ${selected.applicationId} property map`}
+                    src={`https://www.openstreetmap.org/export/embed.html?bbox=${selected.longitudeE6 / 1_000_000 - 0.008}%2C${selected.latitudeE6 / 1_000_000 - 0.008}%2C${selected.longitudeE6 / 1_000_000 + 0.008}%2C${selected.latitudeE6 / 1_000_000 + 0.008}&layer=mapnik&marker=${selected.latitudeE6 / 1_000_000}%2C${selected.longitudeE6 / 1_000_000}`}
+                    loading="lazy"
+                    referrerPolicy="no-referrer"
+                    style={{ width: "100%", height: 220, border: "1px solid var(--line)", borderRadius: 8 }}
+                  />
+                  <p className="mono micro" style={{ marginTop: 6 }}>
+                    {(selected.latitudeE6 / 1_000_000).toFixed(6)}, {(selected.longitudeE6 / 1_000_000).toFixed(6)}
+                  </p>
+                </>
+              ) : (
+                <p className="notice notice--alert">Legacy application has no location pin. Do not approve a location-based listing from it.</p>
+              )}
               <div className="buy-panel__list" style={{ marginTop: 12 }}>
                 <div>
                   <span>Locality</span>
@@ -502,12 +551,26 @@ export function RegistrarConsole() {
                       placeholder="Write the reason the owner will see, e.g. page 3 is unreadable."
                     />
                   </div>
+                  {selected.latitudeE6 !== undefined && selected.longitudeE6 !== undefined ? (
+                    <label className="choice" style={{ marginTop: 14 }}>
+                      <input
+                        type="checkbox"
+                        checked={locationConfirmed}
+                        onChange={(event) => setLocationConfirmedId(event.target.checked ? selected.applicationId : null)}
+                      />
+                      I checked that the submitted map pin matches the property shown in the deed.
+                    </label>
+                  ) : (
+                    <p className="micro" style={{ color: "crimson", marginTop: 12 }}>
+                      This legacy application has no coordinates and cannot be approved for location-backed listings.
+                    </p>
+                  )}
                   <div className="flex wrap gap-8" style={{ marginTop: 12 }}>
                     <button
                       type="button"
                       className="btn btn--verified btn--small"
                       onClick={() => void decide("approved")}
-                      disabled={processing !== null}
+                      disabled={processing !== null || !locationConfirmed || selected.latitudeE6 === undefined || selected.longitudeE6 === undefined}
                     >
                       {processing === "approve"
                         ? "Registering on Hedera…"
@@ -647,7 +710,11 @@ export function RegistrarConsole() {
                       <StatusStamp state={room.state} />
                     </td>
                     <td>
-                      {room.state === "frozen" ? (
+                      {room.legacyRegistry ? (
+                        <span className="dim" style={{ fontSize: 10.5 }}>
+                          Retained registry · view only
+                        </span>
+                      ) : room.state === "frozen" ? (
                         <button
                           type="button"
                           className="btn btn--ghost btn--small"

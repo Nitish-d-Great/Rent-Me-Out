@@ -14,7 +14,7 @@ import {
   type Room,
 } from "@/lib/data";
 import { readRoomIndex } from "@/lib/arkiv/listings";
-import { readRoom } from "@/lib/chain/registry";
+import { legacyRegistryAddress, readRoom, registryAddress } from "@/lib/chain/registry";
 import { recordToRoom, shortAddress } from "@/lib/chain/to-room";
 
 /**
@@ -23,14 +23,22 @@ import { recordToRoom, shortAddress } from "@/lib/chain/to-room";
  * because they have no on-chain listing behind them.
  */
 async function loadRoom(roomId: string): Promise<{ room: Room | null; live: boolean }> {
-  if (/^\d+$/.test(roomId)) {
+  const legacyMatch = /^legacy-(\d+)$/.exec(roomId);
+  const currentMatch = /^(\d+)$/.exec(roomId);
+  if (legacyMatch || currentMatch) {
     try {
-      const record = await readRoom(BigInt(roomId));
+      const legacy = Boolean(legacyMatch);
+      const listingNumber = legacyMatch?.[1] ?? currentMatch![1];
+      const registry = legacy ? legacyRegistryAddress() : registryAddress();
+      const record = registry
+        ? await readRoom(BigInt(listingNumber), registry, legacy)
+        : null;
       if (record) {
-        const entry = (await readRoomIndex().catch(() => null))?.get(record.listingId);
+        const entry = legacy ? null : (await readRoomIndex().catch(() => null))?.get(record.listingNumber);
         return {
           room: recordToRoom({
             ...record,
+            listingId: roomId,
             city: entry?.city,
             purchaseTx: entry?.purchaseTx,
             arkivKey: entry?.rightsKey ?? entry?.listingKey,
@@ -121,6 +129,39 @@ export default async function RoomDetailPage({ params }: PageProps) {
                 <strong>{formatDate(room.validUntil)}</strong>
               </div>
             </div>
+
+            {live && room.latitude !== undefined && room.longitude !== undefined && (
+              <section className="panel" style={{ marginTop: 20 }} aria-labelledby="location-title">
+                <div className="panel__head">
+                  <h2 id="location-title">On-chain property location</h2>
+                  <span className="badge badge--verified">Hedera listing metadata</span>
+                </div>
+                <div className="panel__body">
+                  <p className="small dim" style={{ marginBottom: 12 }}>
+                    Owner-supplied coordinates from the encrypted application. The registrar reviews the pin against the deed, and the listing proof binds it to these terms. The chain confirms what was published, not an independent survey.
+                  </p>
+                  <iframe
+                    title="Property location from Hedera"
+                    src={`https://www.openstreetmap.org/export/embed.html?bbox=${room.longitude - 0.008}%2C${room.latitude - 0.008}%2C${room.longitude + 0.008}%2C${room.latitude + 0.008}&layer=mapnik&marker=${room.latitude}%2C${room.longitude}`}
+                    loading="lazy"
+                    referrerPolicy="no-referrer"
+                    style={{ width: "100%", height: 300, border: "1px solid var(--line)", borderRadius: 8 }}
+                  />
+                  <p className="mono micro" style={{ marginTop: 8 }}>
+                    {room.latitude.toFixed(6)}, {room.longitude.toFixed(6)}
+                  </p>
+                </div>
+              </section>
+            )}
+            {live && room.legacyRegistry && room.latitude === undefined && (
+              <div className="notice notice--brass" style={{ marginTop: 20 }}>
+                <span className="notice__icon" aria-hidden="true">i</span>
+                <div>
+                  <strong>This active listing predates on-chain location metadata.</strong>
+                  <p>Its current room rights remain verifiable on the previous registry, but no coordinates were recorded for this listing.</p>
+                </div>
+              </div>
+            )}
 
             <div className="panel" style={{ marginTop: 26 }}>
               <div className="panel__head">

@@ -10,7 +10,7 @@
 const fs = require("fs");
 const path = require("path");
 const { Identity, Group, generateProof } = require("@semaphore-protocol/core");
-const { solidityPackedKeccak256 } = require("ethers");
+const { encodePacked, keccak256 } = require("viem");
 
 (async () => {
   // DEMO ONLY: fixed seeds. Real owners create a random Identity on their own device.
@@ -21,8 +21,8 @@ const { solidityPackedKeccak256 } = require("ethers");
   // Cycle 1 deliberately spans "now" (2026-10-01 -> 2027-06-30), so a freshly bought room
   // reads isValid() == true and the tenant QR page shows a live tenancy rather than
   // "period has not started". Update these before they lapse.
-  const terms = { room: 2, start: 1790812800, end: 1814313600, priceUsdc6: "1200000000", payout: "0x000000000000000000000000000000000000dEaD" };
-  const message = BigInt(solidityPackedKeccak256(["uint256", "uint64", "uint64", "uint256", "address"], [terms.room, terms.start, terms.end, terms.priceUsdc6, terms.payout]));
+  const terms = { room: 2, start: 1790812800, end: 1814313600, priceUsdc6: "1200000000", payout: "0x000000000000000000000000000000000000dEaD", latitudeE6: 19_119_700, longitudeE6: 72_846_400 };
+  const message = BigInt(keccak256(encodePacked(["uint256", "uint64", "uint64", "uint256", "address", "int32", "int32"], [BigInt(terms.room), BigInt(terms.start), BigInt(terms.end), BigInt(terms.priceUsdc6), terms.payout, terms.latitudeE6, terms.longitudeE6])));
   const scope = BigInt(terms.room); // nullifier = private, stable room tag
 
   const p = await generateProof(owners[1], group, message, scope);
@@ -32,8 +32,8 @@ const { solidityPackedKeccak256 } = require("ethers");
   const owner2b = new Identity("rentmeout-demo-property-2-cycle2");
   const group2 = new Group([...commitments, owner2b.commitment.toString()]);
   // Cycle 2 is the next tenancy, after cycle 1 expires (2027-07-01 -> 2028-03-31).
-  const terms2 = { room: 2, start: 1814400000, end: 1838073600, priceUsdc6: "1500000000", payout: terms.payout };
-  const message2 = BigInt(solidityPackedKeccak256(["uint256", "uint64", "uint64", "uint256", "address"], [terms2.room, terms2.start, terms2.end, terms2.priceUsdc6, terms2.payout]));
+  const terms2 = { room: 2, start: 1814400000, end: 1838073600, priceUsdc6: "1500000000", payout: terms.payout, latitudeE6: terms.latitudeE6, longitudeE6: terms.longitudeE6 };
+  const message2 = BigInt(keccak256(encodePacked(["uint256", "uint64", "uint64", "uint256", "address", "int32", "int32"], [BigInt(terms2.room), BigInt(terms2.start), BigInt(terms2.end), BigInt(terms2.priceUsdc6), terms2.payout, terms2.latitudeE6, terms2.longitudeE6])));
   const p2 = await generateProof(owner2b, group2, message2, BigInt(terms2.room));
   const out = {
     note: "Demo fixture. Owner #2 proves its property is approved, for listing terms below.",

@@ -29,6 +29,8 @@ const CREATE_LISTING_ABI = [
       { name: "end", type: "uint64" },
       { name: "price", type: "uint256" },
       { name: "payout", type: "address" },
+      { name: "latitudeE6", type: "int32" },
+      { name: "longitudeE6", type: "int32" },
     ],
     outputs: [{ type: "uint256" }],
   },
@@ -44,6 +46,7 @@ const CREATE_LISTING_ABI = [
   { type: "error", name: "InvalidPeriod", inputs: [] },
   { type: "error", name: "InvalidPrice", inputs: [] },
   { type: "error", name: "InvalidPayout", inputs: [] },
+  { type: "error", name: "InvalidCoordinates", inputs: [] },
 ] as const;
 
 // A listing issues its ATS token in the same transaction, which measured about 7.9M gas
@@ -58,7 +61,7 @@ interface ProofBody {
 export async function POST(request: Request) {
   let body: {
     proof?: ProofBody; start?: number; end?: number; price?: string; payout?: string;
-    city?: string; label?: string;
+    city?: string; label?: string; latitudeE6?: number; longitudeE6?: number;
   };
   try {
     body = await request.json();
@@ -66,8 +69,13 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "invalid_body" }, { status: 400 });
   }
 
-  const { proof, start, end, price, payout } = body;
-  if (!proof || !start || !end || !price || !payout || proof.points?.length !== 8) {
+  const { proof, start, end, price, payout, latitudeE6, longitudeE6 } = body;
+  if (
+    !proof || !start || !end || !price || !payout || proof.points?.length !== 8 ||
+    !Number.isInteger(latitudeE6) || !Number.isInteger(longitudeE6) ||
+    latitudeE6! < -90_000_000 || latitudeE6! > 90_000_000 ||
+    longitudeE6! < -180_000_000 || longitudeE6! > 180_000_000
+  ) {
     return NextResponse.json({ error: "invalid_listing" }, { status: 400 });
   }
 
@@ -85,7 +93,7 @@ export async function POST(request: Request) {
       scope: BigInt(proof.scope),
       points: proof.points.map(BigInt) as unknown as readonly [bigint, bigint, bigint, bigint, bigint, bigint, bigint, bigint],
     },
-    BigInt(start), BigInt(end), BigInt(price), payout as `0x${string}`,
+    BigInt(start), BigInt(end), BigInt(price), payout as `0x${string}`, latitudeE6!, longitudeE6!,
   ] as const;
 
   try {

@@ -1,5 +1,5 @@
 import { createPublicClient, http, parseAbiItem } from "viem";
-import { hederaTestnet, registryAddress } from "./registry";
+import { hederaTestnet, legacyRegistryAddress, registryAddress } from "./registry";
 
 /**
  * A broker's purchases, read from RoomPurchased events.
@@ -34,24 +34,28 @@ export async function readPurchases(broker?: `0x${string}`): Promise<Purchase[]>
   const tip = await pub.getBlockNumber();
   const fromBlock = tip > LOOKBACK ? tip - LOOKBACK : 0n;
 
-  const logs = await pub.getLogs({
-    address: registryAddress(),
-    event: PURCHASED,
-    args: broker ? { broker } : undefined,
-    fromBlock,
-    toBlock: tip,
-  });
-
-  return logs
-    .map((log) => ({
-      listingId: log.args.listingId?.toString() ?? "0",
+  const registries = [
+    { address: registryAddress(), legacy: false },
+    ...(legacyRegistryAddress() ? [{ address: legacyRegistryAddress()!, legacy: true }] : []),
+  ];
+  const batches = await Promise.all(registries.map(async ({ address, legacy }) => {
+    const logs = await pub.getLogs({
+      address,
+      event: PURCHASED,
+      args: broker ? { broker } : undefined,
+      fromBlock,
+      toBlock: tip,
+    });
+    return logs.map((log) => ({
+      listingId: `${legacy ? "legacy-" : ""}${log.args.listingId?.toString() ?? "0"}`,
       broker: (log.args.broker ?? "0x") as `0x${string}`,
       payout: (log.args.payout ?? "0x") as `0x${string}`,
       price: (Number(log.args.price ?? 0n) / 1e6).toFixed(2),
       transactionHash: log.transactionHash,
       blockNumber: log.blockNumber?.toString() ?? "0",
-    }))
-    .reverse();
+    }));
+  }));
+  return batches.flat().sort((a, b) => Number(b.blockNumber) - Number(a.blockNumber));
 }
 
 /** The purchase of one room, or null if nobody has bought it. */

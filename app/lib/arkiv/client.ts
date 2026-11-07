@@ -12,7 +12,12 @@ import { privateKeyToAccount } from "viem/accounts";
  * for everything the backend publishes.
  */
 function chain() {
-  return rabdi({ accessKey: process.env.ARKIV_ACCESS_KEY ?? "" });
+  // The access key is quota/auth metadata, not a signing secret. Accept the
+  // client-visible Arkiv key as a fallback for local setups that only define it
+  // under NEXT_PUBLIC_ARKIV_ACCESS_KEY.
+  return rabdi({
+    accessKey: process.env.ARKIV_ACCESS_KEY ?? process.env.NEXT_PUBLIC_ARKIV_ACCESS_KEY ?? "",
+  });
 }
 
 function writerAccount() {

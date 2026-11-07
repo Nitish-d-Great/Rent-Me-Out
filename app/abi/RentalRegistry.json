@@ -188,6 +188,16 @@
         "name": "payout",
         "type": "address",
         "internalType": "address"
+      },
+      {
+        "name": "latitudeE6",
+        "type": "int32",
+        "internalType": "int32"
+      },
+      {
+        "name": "longitudeE6",
+        "type": "int32",
+        "internalType": "int32"
       }
     ],
     "outputs": [
@@ -288,6 +298,16 @@
             "name": "roomTag",
             "type": "uint256",
             "internalType": "uint256"
+          },
+          {
+            "name": "latitudeE6",
+            "type": "int32",
+            "internalType": "int32"
+          },
+          {
+            "name": "longitudeE6",
+            "type": "int32",
+            "internalType": "int32"
           }
         ]
       }
@@ -456,6 +476,16 @@
         "name": "payout",
         "type": "address",
         "internalType": "address"
+      },
+      {
+        "name": "latitudeE6",
+        "type": "int32",
+        "internalType": "int32"
+      },
+      {
+        "name": "longitudeE6",
+        "type": "int32",
+        "internalType": "int32"
       }
     ],
     "outputs": [
@@ -1049,6 +1079,11 @@
   {
     "type": "error",
     "name": "BrokerNotVerified",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InvalidCoordinates",
     "inputs": []
   },
   {

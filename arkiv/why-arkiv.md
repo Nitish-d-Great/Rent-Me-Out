@@ -1,26 +1,30 @@
 # Why Arkiv
 
-**What users would lose with Postgres:**
+Arkiv is the public index a tenant can query without an account. A room can be found by
+city, availability and price, and the listing record has its own end time. That gives
+another client the same way to discover the listing without asking our server to
+translate a private database query. A Postgres-backed app could expose a public API too;
+what it would not give us by default is a shared, wallet-owned entity with a network
+expiry that readers can query directly.
 
-- **Checking without trusting us.** Anyone can run the query in [schema.md](schema.md) with
-  no account and no key. A tenant, or another app, does not need our API to find a room or a
-  rights record. With Postgres, only our app could answer.
-- **Expiry they can verify.** A listing's expiry is part of the record, enforced by the
-  network, not a cleanup job on our server that might not run.
-- **A record that outlives our app.** Listings and rights records stay readable until they
-  expire, even if our site is down.
+Arkiv is not the authority for room rights. Hedera is. A purchase or freeze is settled
+there first, then copied into Arkiv for discovery. If that copy fails, the right is still
+real and the app reports the index as unavailable; it never treats a stale Arkiv record
+as proof of ownership.
 
-**What Arkiv does not do:** it does not decide who holds a room. Hedera does. If the two ever
-disagree, the app shows Hedera's answer, and a failed Arkiv write is reported as "not indexed"
-rather than as a failed sale.
+We keep the following data elsewhere:
 
-**What we kept off Arkiv, and why:**
-
-| Data | Where it is | Why |
+| Data | Where it lives | Why |
 |---|---|---|
-| Deeds, addresses, nicknames, commitments | Encrypted on Swarm | Arkiv entities are public |
-| The encryption key | Server environment | A public entity must never hold it |
-| Encrypted-reference keys | Nowhere: we encrypt ourselves, so references hold no key | Swarm's own encrypted references contain their key |
-| Who holds a room, and payments | Hedera | Needs atomic settlement and compliance controls |
-| World ID nullifiers | Hedera, hashed | Expiry would let a banned person re-register when it lapsed |
-| Owner's Semaphore secret | The owner's browser | Must never leave their device |
+| City, price, dates and public listing status | Arkiv | These are fields tenants filter on and can safely be public. |
+| Current holder, transfer and payment | Hedera | This is the source of truth for who holds the rental right. |
+| Deed, address, nicknames and property details | Encrypted on Swarm | Arkiv entities are public; these details should not be. |
+| Encryption key | Server environment | A key in a public entity would make the ciphertext readable. |
+| World ID nullifier hash | Hedera | It is used to prevent the same identity registering twice; letting it expire could reset that check. |
+| Owner's Semaphore secret | Owner's browser | The secret used to make a proof should not leave the owner's device. |
+
+Today one backend wallet writes the Arkiv records and pays their tGLM fees. The `payout`
+field on a room listing is the property owner's wallet, but the Arkiv entity owner is our
+backend wallet. That keeps the demo usable without asking every owner for tGLM; it also
+means the owner cannot edit their Arkiv entity directly. Sponsored writes or a practical
+way to transfer ownership at creation would make this design better.
