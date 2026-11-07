@@ -7,6 +7,20 @@ export interface PropertyCoordinates {
   longitude: number;
 }
 
+/** Coordinates are stored on-chain as microdegrees, so more digits than this have no effect. */
+const MAX_DECIMALS = 6;
+
+/** Cuts typed text to six decimals. It cuts rather than rounds, so digits never change as you type. */
+function trimDecimals(raw: string): string {
+  const dot = raw.indexOf(".");
+  return dot === -1 ? raw : raw.slice(0, dot + 1 + MAX_DECIMALS);
+}
+
+/** For values that arrive whole, from map search or the device's location. */
+function roundCoordinate(value: number): number {
+  return Number(value.toFixed(MAX_DECIMALS));
+}
+
 export function LocationPicker({
   value,
   onChange,
@@ -22,8 +36,10 @@ export function LocationPicker({
   const [longitudeText, setLongitudeText] = useState("");
 
   useEffect(() => {
-    setLatitudeText(value ? String(value.latitude) : "");
-    setLongitudeText(value ? String(value.longitude) : "");
+    if (!value) return;
+    // Left alone when it already means the same number, or typing "19.10" would become "19.1".
+    setLatitudeText((text) => (text.trim() && Number(text) === value.latitude ? text : String(value.latitude)));
+    setLongitudeText((text) => (text.trim() && Number(text) === value.longitude ? text : String(value.longitude)));
   }, [value]);
 
   const mapUrl = useMemo(() => {
@@ -64,7 +80,7 @@ export function LocationPicker({
     setBusy(true);
     navigator.geolocation.getCurrentPosition(
       ({ coords }) => {
-        onChange({ latitude: coords.latitude, longitude: coords.longitude });
+        onChange({ latitude: roundCoordinate(coords.latitude), longitude: roundCoordinate(coords.longitude) });
         setResults([]);
         setBusy(false);
       },
@@ -78,7 +94,8 @@ export function LocationPicker({
     );
   }
 
-  function updateCoordinate(which: "latitude" | "longitude", raw: string) {
+  function updateCoordinate(which: "latitude" | "longitude", typed: string) {
+    const raw = trimDecimals(typed);
     const nextLatitude = which === "latitude" ? raw : latitudeText;
     const nextLongitude = which === "longitude" ? raw : longitudeText;
     if (which === "latitude") setLatitudeText(raw);
@@ -127,7 +144,7 @@ export function LocationPicker({
               type="button"
               className="btn btn--ghost"
               key={`${result.lat},${result.lon}`}
-              onClick={() => { onChange({ latitude: result.lat, longitude: result.lon }); setResults([]); }}
+              onClick={() => { onChange({ latitude: roundCoordinate(result.lat), longitude: roundCoordinate(result.lon) }); setResults([]); }}
               style={{ textAlign: "left", justifyContent: "flex-start" }}
             >
               {result.label}

@@ -122,14 +122,37 @@ async function withDetails(row: ApplicationRow): Promise<Application> {
 const newestFirst = (a: ApplicationRow, b: ApplicationRow) =>
   b.submittedAt.localeCompare(a.submittedAt);
 
-export async function listApplications(): Promise<Application[]> {
+/**
+ * One application the server cannot decrypt, usually because another deployment wrote it
+ * with a different DEED_ENCRYPTION_KEY, must not hide the rest of the queue.
+ */
+export async function listApplications(): Promise<{
+  applications: Application[];
+  unreadable: string[];
+}> {
   const rows = (await queryRows()).sort(newestFirst);
-  return Promise.all(rows.map(withDetails));
+  const results = await Promise.allSettled(rows.map(withDetails));
+  const applications: Application[] = [];
+  const unreadable: string[] = [];
+  results.forEach((result, index) => {
+    if (result.status === "fulfilled") {
+      applications.push(result.value);
+    } else {
+      unreadable.push(rows[index].applicationId);
+      console.error(
+        `[applications] cannot read ${rows[index].applicationId}:`,
+        result.reason instanceof Error ? result.reason.message : result.reason,
+      );
+    }
+  });
+  return { applications, unreadable };
 }
 
 export async function listApplicationsOfOwner(commitment: string): Promise<Application[]> {
   const rows = (await queryRows({ ownerTag: ownerTagOf(commitment) })).sort(newestFirst);
-  return Promise.all(rows.map(withDetails));
+  const results = await Promise.allSettled(rows.map(withDetails));
+  // Same reasoning as listApplications: an old unreadable entry must not hide the rest.
+  return results.flatMap((result) => (result.status === "fulfilled" ? [result.value] : []));
 }
 
 export async function getApplication(applicationId: string): Promise<Application | undefined> {

@@ -56,6 +56,7 @@ export function RegistrarConsole() {
   const [sweepNote, setSweepNote] = useState<string | null>(null);
 
   const [apps, setApps] = useState<OwnerApplication[]>([]);
+  const [unreadable, setUnreadable] = useState<string[]>([]);
   const [appsState, setAppsState] = useState<"loading" | "ready" | "locked" | "unavailable">("loading");
   const appsRequestInFlight = useRef(false);
   const [token, setToken] = useState("");
@@ -87,8 +88,12 @@ export function RegistrarConsole() {
         return;
       }
       if (!res.ok) throw new Error(String(res.status));
-      const data = (await res.json()) as { applications: OwnerApplication[] };
+      const data = (await res.json()) as {
+        applications: OwnerApplication[];
+        unreadable?: string[];
+      };
       setApps(data.applications);
+      setUnreadable(data.unreadable ?? []);
       setAppsState("ready");
     } catch {
       setAppsState("unavailable");
@@ -382,6 +387,12 @@ export function RegistrarConsole() {
             </div>
           </div>
           <div className="queue-list">
+            {unreadable.length > 0 && (
+              <p className="micro" style={{ padding: 18, color: "crimson" }}>
+                ● {unreadable.length} application(s) could not be decrypted here, because they
+                were encrypted with a different key: {unreadable.join(", ")}
+              </p>
+            )}
             {appsState === "loading" && (
               <p className="micro dim" style={{ padding: 18 }}>Reading the queue from Arkiv…</p>
             )}

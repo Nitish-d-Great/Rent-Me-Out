@@ -36,10 +36,9 @@ export async function GET(request: Request) {
     if (!isRegistrar(request)) {
       return NextResponse.json({ error: "registrar_only" }, { status: 401 });
     }
-    return NextResponse.json(
-      { applications: await listApplications() },
-      { headers: { "Cache-Control": "no-store" } },
-    );
+    return NextResponse.json(await listApplications(), {
+      headers: { "Cache-Control": "no-store" },
+    });
   } catch (error) {
     console.error("[properties] read failed:", error);
     return NextResponse.json({ error: "applications_unavailable" }, { status: 502 });
